@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "experiment_id": "faac-rtx3090-pilot",
+  "scope": "broker-demo",
+  "repository": "jasonjiang8866/flashattentionanycard",
+  "source_sha": "d53afd9aa6f3ce68ac896db0924558d1fe72ffe7",
+  "image": "ghcr.io/jasonjiang8866/flashattentionanycard-runpod@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "entrypoint": [
+    "python",
+    "-m",
+    "broker_workloads.kernel_pilot",
+    "--seed",
+    "17"
+  ],
+  "strategy": "hardware_benchmark",
+  "gpu_allowlist": [
+    "NVIDIA GeForce RTX 3090"
+  ],
+  "gpu_preference": [
+    "NVIDIA GeForce RTX 3090"
+  ],
+  "min_vram_gb": 24,
+  "gpu_count": 1,
+  "compatibility": {
+    "cuda_versions": [
+      "12.8"
+    ],
+    "architectures": [
+      "sm_86"
+    ]
+  },
+  "limits": {
+    "max_gpu_hourly_usd": 1.0,
+    "total_budget_usd": 2.0,
+    "runtime_seconds": 120,
+    "startup_seconds": 180,
+    "collect_seconds": 60,
+    "cleanup_seconds": 60,
+    "max_start_attempts": 2,
+    "max_wait_seconds": 20,
+    "max_queries": 4,
+    "storage_hourly_usd": 0.02,
+    "transfer_reserve_usd": 0.1,
+    "request_reserve_usd": 0.01,
+    "cleanup_reserve_usd": 0.2,
+    "cost_basis": "MOCK illustrative rates and reserves; not a quote or authorization"
+  },
+  "results": {
+    "required_files": [
+      "metrics.json",
+      "worker.log"
+    ],
+    "metric_min": {
+      "macro_f1": 0.0
+    }
+  },
+  "benchmark_group": "rtx3090-sm86"
+}
