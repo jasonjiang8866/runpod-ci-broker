@@ -1,0 +1,23 @@
+[project]
+name = "runpod-ci-broker"
+version = "0.1.0"
+description = "Fail-closed RunPod planning and lifecycle simulation for GitHub Actions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.12,<3"]
+[project.scripts]
+runpod-ci-broker = "runpod_ci_broker.cli:main"
+[dependency-groups]
+dev = ["pytest>=8.4,<10", "ruff>=0.14", "mypy>=1.18", "pyyaml>=6", "types-PyYAML>=6"]
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+[tool.ruff]
+line-length = 100
+[tool.mypy]
+python_version = "3.12"
+strict = true

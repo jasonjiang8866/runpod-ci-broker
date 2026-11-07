@@ -1,0 +1,46 @@
+name: RunPod read-only preflight
+on:
+  workflow_dispatch:
+    inputs:
+      example:
+        description: Committed illustrative task (replace configuration in a reviewed PR for real use)
+        type: choice
+        options: [simplexlora-flexible, spleeter-strict, flashattention-hardware]
+        default: simplexlora-flexible
+permissions:
+  contents: read
+concurrency:
+  group: runpod-ci-broker-read-only
+  cancel-in-progress: false
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Observe capacity and existing resources (GET only)
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          EXAMPLE: ${{ inputs.example }}
+        run: |
+          case "$EXAMPLE" in
+            simplexlora-flexible|spleeter-strict|flashattention-hardware) ;;
+            *) exit 2 ;;
+          esac
+          uv run --locked --no-dev runpod-ci-broker --config "examples/$EXAMPLE.json" --action preflight --output out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: broker-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,62 @@
+[
+  {
+    "gpu_id": "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb",
+    "data_center": "US-KS-2",
+    "memory_gb": 24,
+    "gpu_count": 1,
+    "hourly_usd": 0.69,
+    "capacity": "available",
+    "cuda_versions": [
+      "12.8"
+    ],
+    "driver": "570.124.06",
+    "architecture": "sm_120",
+    "volume_compatible": true,
+    "evidence": "mock"
+  },
+  {
+    "gpu_id": "NVIDIA GeForce RTX 4090",
+    "data_center": "US-KS-2",
+    "memory_gb": 24,
+    "gpu_count": 1,
+    "hourly_usd": 0.74,
+    "capacity": "available",
+    "cuda_versions": [
+      "12.8"
+    ],
+    "driver": "570.124.06",
+    "architecture": "sm_89",
+    "volume_compatible": true,
+    "evidence": "mock"
+  },
+  {
+    "gpu_id": "NVIDIA GeForce RTX 3090",
+    "data_center": "US-KS-2",
+    "memory_gb": 24,
+    "gpu_count": 1,
+    "hourly_usd": 0.4,
+    "capacity": "available",
+    "cuda_versions": [
+      "12.8"
+    ],
+    "driver": "570.124.06",
+    "architecture": "sm_86",
+    "volume_compatible": true,
+    "evidence": "mock"
+  },
+  {
+    "gpu_id": "NVIDIA GeForce RTX 5090",
+    "data_center": "US-KS-2",
+    "memory_gb": 32,
+    "gpu_count": 1,
+    "hourly_usd": 0.89,
+    "capacity": "available",
+    "cuda_versions": [
+      "12.8"
+    ],
+    "driver": "570.124.06",
+    "architecture": "sm_120",
+    "volume_compatible": true,
+    "evidence": "mock"
+  }
+]

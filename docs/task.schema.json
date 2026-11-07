@@ -1,0 +1,493 @@
+{
+  "$defs": {
+    "Compatibility": {
+      "additionalProperties": false,
+      "properties": {
+        "cuda_versions": {
+          "default": [],
+          "items": {
+            "pattern": "^\\d+\\.\\d+$",
+            "type": "string"
+          },
+          "title": "Cuda Versions",
+          "type": "array"
+        },
+        "min_driver": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+(\\.\\d+)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Driver"
+        },
+        "exact_driver": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+(\\.\\d+)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exact Driver"
+        },
+        "architectures": {
+          "default": [],
+          "items": {
+            "pattern": "^sm_\\d+$",
+            "type": "string"
+          },
+          "title": "Architectures",
+          "type": "array"
+        }
+      },
+      "title": "Compatibility",
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_gpu_hourly_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Gpu Hourly Usd"
+        },
+        "total_budget_usd": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Budget Usd"
+        },
+        "runtime_seconds": {
+          "anyOf": [
+            {
+              "maximum": 14400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Seconds"
+        },
+        "startup_seconds": {
+          "default": 300,
+          "maximum": 1800,
+          "minimum": 1,
+          "title": "Startup Seconds",
+          "type": "integer"
+        },
+        "collect_seconds": {
+          "default": 120,
+          "maximum": 900,
+          "minimum": 1,
+          "title": "Collect Seconds",
+          "type": "integer"
+        },
+        "cleanup_seconds": {
+          "default": 120,
+          "maximum": 900,
+          "minimum": 1,
+          "title": "Cleanup Seconds",
+          "type": "integer"
+        },
+        "max_start_attempts": {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Max Start Attempts",
+          "type": "integer"
+        },
+        "max_wait_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 0,
+          "title": "Max Wait Seconds",
+          "type": "integer"
+        },
+        "max_queries": {
+          "default": 4,
+          "maximum": 30,
+          "minimum": 1,
+          "title": "Max Queries",
+          "type": "integer"
+        },
+        "max_collect_attempts": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Collect Attempts",
+          "type": "integer"
+        },
+        "storage_hourly_usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Storage Hourly Usd"
+        },
+        "transfer_reserve_usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transfer Reserve Usd"
+        },
+        "request_reserve_usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Reserve Usd"
+        },
+        "cleanup_reserve_usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cleanup Reserve Usd"
+        },
+        "prior_spend_usd": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Prior Spend Usd",
+          "type": "number"
+        },
+        "cost_basis": {
+          "default": "unverified; supply storage/transfer/request estimates explicitly",
+          "title": "Cost Basis",
+          "type": "string"
+        }
+      },
+      "title": "Limits",
+      "type": "object"
+    },
+    "Results": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": "/workspace/results",
+          "title": "Path",
+          "type": "string"
+        },
+        "required_files": {
+          "default": [
+            "metrics.json",
+            "worker.log"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Files",
+          "type": "array"
+        },
+        "metric_max": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z0-9_.-]{1,100}$": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "title": "Metric Max",
+          "type": "object"
+        },
+        "metric_min": {
+          "default": {},
+          "patternProperties": {
+            "^[A-Za-z0-9_.-]{1,100}$": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "title": "Metric Min",
+          "type": "object"
+        },
+        "max_bytes": {
+          "default": 10485760,
+          "maximum": 1073741824,
+          "minimum": 1,
+          "title": "Max Bytes",
+          "type": "integer"
+        },
+        "export": {
+          "const": "runner_verified_bundle",
+          "default": "runner_verified_bundle",
+          "title": "Export",
+          "type": "string"
+        },
+        "collection_failure": {
+          "const": "retry_until_deadline_then_terminate",
+          "default": "retry_until_deadline_then_terminate",
+          "title": "Collection Failure",
+          "type": "string"
+        }
+      },
+      "title": "Results",
+      "type": "object"
+    },
+    "Volume": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "default": "none",
+          "enum": [
+            "none",
+            "network",
+            "global"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "data_center": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Center"
+        },
+        "mount_path": {
+          "default": "/workspace-data",
+          "title": "Mount Path",
+          "type": "string"
+        }
+      },
+      "title": "Volume",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "experiment_id": {
+      "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "scope": {
+      "default": "default",
+      "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+      "title": "Scope",
+      "type": "string"
+    },
+    "repository": {
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+      "title": "Repository",
+      "type": "string"
+    },
+    "source_sha": {
+      "pattern": "^[a-f0-9]{40}$",
+      "title": "Source Sha",
+      "type": "string"
+    },
+    "image": {
+      "pattern": "^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$",
+      "title": "Image",
+      "type": "string"
+    },
+    "entrypoint": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Entrypoint",
+      "type": "array"
+    },
+    "strategy": {
+      "enum": [
+        "flexible_smoke",
+        "strict_repro",
+        "hardware_benchmark"
+      ],
+      "title": "Strategy",
+      "type": "string"
+    },
+    "gpu_allowlist": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "title": "Gpu Allowlist",
+      "type": "array"
+    },
+    "gpu_preference": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Gpu Preference",
+      "type": "array"
+    },
+    "min_vram_gb": {
+      "default": 24,
+      "maximum": 1024,
+      "minimum": 1,
+      "title": "Min Vram Gb",
+      "type": "integer"
+    },
+    "gpu_count": {
+      "default": 1,
+      "maximum": 8,
+      "minimum": 1,
+      "title": "Gpu Count",
+      "type": "integer"
+    },
+    "cloud": {
+      "default": "SECURE",
+      "enum": [
+        "SECURE",
+        "COMMUNITY"
+      ],
+      "title": "Cloud",
+      "type": "string"
+    },
+    "data_centers": {
+      "default": [],
+      "items": {
+        "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+        "type": "string"
+      },
+      "title": "Data Centers",
+      "type": "array"
+    },
+    "benchmark_group": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Benchmark Group"
+    },
+    "compatibility": {
+      "$ref": "#/$defs/Compatibility"
+    },
+    "volume": {
+      "$ref": "#/$defs/Volume"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits"
+    },
+    "results": {
+      "$ref": "#/$defs/Results"
+    },
+    "cleanup_policy": {
+      "const": "terminate_owned_and_verify",
+      "default": "terminate_owned_and_verify",
+      "title": "Cleanup Policy",
+      "type": "string"
+    },
+    "registry_credential_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9_.-]{1,100}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Registry Credential Id"
+    },
+    "input_sha256": {
+      "default": {},
+      "patternProperties": {
+        "^[A-Za-z0-9_.-]{1,100}$": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "title": "Input Sha256",
+      "type": "object"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "repository",
+    "source_sha",
+    "image",
+    "entrypoint",
+    "strategy"
+  ],
+  "title": "Task",
+  "type": "object"
+}

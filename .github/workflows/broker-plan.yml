@@ -1,0 +1,58 @@
+name: Reusable no-cost Broker plan
+on:
+  workflow_call:
+    inputs:
+      broker_sha:
+        description: Full reviewed Broker commit; pin the workflow uses reference to the same SHA
+        type: string
+        required: true
+      task_json:
+        description: Strict JSON task; no credentials or inline code
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: runpod-ci-broker-offline
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Require immutable Broker source
+        env:
+          BROKER_SHA: ${{ inputs.broker_sha }}
+        run: |
+          python - <<'PY'
+          import os, re
+          if not re.fullmatch(r'[0-9a-f]{40}', os.environ['BROKER_SHA']):
+              raise SystemExit('Full commit SHA required')
+          PY
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: jasonjiang8866/runpod-ci-broker
+          ref: ${{ inputs.broker_sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Write task data without shell interpolation
+        env:
+          TASK_JSON: ${{ inputs.task_json }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          Path('task.json').write_text(os.environ['TASK_JSON'])
+          PY
+      - run: uv run --locked --no-dev runpod-ci-broker --config task.json --output out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: broker-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/
+          retention-days: 30
+          if-no-files-found: error
