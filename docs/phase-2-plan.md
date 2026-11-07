@@ -1,8 +1,9 @@
 # Phase 2: authenticated, read-only evidence
 
-**Update, 2026-11-07:** PR #2 is merged and the first authenticated preflight
-completed. Catalog and inventory queries succeeded; no candidate met the queried
-conditions. See [run evidence](evidence/preflight-42331880254.md). The sections
+**Update, 2026-11-07:** PR #2 and #4 are merged. The exact-only preflight found
+no capacity, while the later minimum-CUDA comparison found all four models eligible.
+See [latest run evidence](evidence/preflight-42334557432.md) and the
+[earlier observation](evidence/preflight-42331880254.md). The sections
 below retain the pre-run plan for provenance; the evidence record supersedes
 its statements that dispatch and Secret validity were unverified.
 

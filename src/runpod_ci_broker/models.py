@@ -39,10 +39,17 @@ class Limits(Model):
 
 
 class Compatibility(Model):
+    min_cuda_version: Annotated[str, Field(pattern=r"^\d+\.\d+$")] | None = None
     cuda_versions: list[Annotated[str, Field(pattern=r"^\d+\.\d+$")]] = []
     min_driver: Annotated[str, Field(pattern=r"^\d+(\.\d+)+$")] | None = None
     exact_driver: Annotated[str, Field(pattern=r"^\d+(\.\d+)+$")] | None = None
     architectures: list[Annotated[str, Field(pattern=r"^sm_\d+$")]] = []
+
+    @model_validator(mode="after")
+    def cuda_filter(self) -> Self:
+        if self.cuda_versions and self.min_cuda_version:
+            raise ValueError("exact CUDA set and minimum CUDA are mutually exclusive")
+        return self
 
 
 class Volume(Model):
@@ -141,7 +148,8 @@ class Task(Model):
         if self.strategy == "strict_repro":
             c = self.compatibility
             if (
-                len(self.data_centers) != 1
+                c.min_cuda_version is not None
+                or len(self.data_centers) != 1
                 or not c.exact_driver
                 or len(c.cuda_versions) != 1
                 or len(c.architectures) != 1
@@ -150,8 +158,12 @@ class Task(Model):
         return self
 
     def fingerprint(self) -> str:
+        payload = self.model_dump()
+        # Preserve v1 fingerprints for tasks without the new optional floor.
+        if payload["compatibility"]["min_cuda_version"] is None:
+            del payload["compatibility"]["min_cuda_version"]
         return hashlib.sha256(
-            json.dumps(self.model_dump(), sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
 
 
@@ -163,7 +175,7 @@ class Candidate(Model):
     hourly_usd: Nonnegative | None = None
     capacity: Literal["available", "none", "unknown"] = "unknown"
     cloud: Literal["SECURE", "COMMUNITY"] = "SECURE"
-    cuda_versions: list[str] = []
+    cuda_versions: list[Annotated[str, Field(pattern=r"^\d+\.\d+$")]] = []
     driver: str | None = None
     architecture: str | None = None
     volume_compatible: bool | None = None

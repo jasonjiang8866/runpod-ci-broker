@@ -205,6 +205,19 @@ A missing key produces an unknown-inventory report and exit 2; it does not block
 local development. No key should be pasted into a task file, command argument or chat.
 Do not grant credentials to fork/untrusted PR workflows.
 
+### CUDA filtering and stock diagnostics
+
+The flexible smoke template uses `compatibility.min_cuda_version: "12.8"` and a
+**USD 3 per GPU-hour** ceiling. RTX 5090 is already in its allowlist. The task's
+total budget remains illustrative, with no paid authorization. `cuda_versions`
+means exact host catalog versions; it is mutually exclusive with the numeric floor.
+Strict reproduction remains exact. A host catalog match does not prove image CUDA,
+PTX/kernel or device-architecture compatibility.
+
+For the manual preflight, enable `diagnose_cuda=true` (CLI: `--diagnose-cuda`) to
+compare exact, minimum and unfiltered inventory without changing admission.
+[Parameters, query bounds and interpretation](docs/cuda-preflight.md).
+
 Reusable caller shape (replace both placeholders with the same reviewed full SHA):
 
 ```yaml
@@ -222,9 +235,9 @@ jobs:
    workflows, three scenario templates and [current repository audit](docs/repository-audit.md).
 2. **Read-only:** use the reviewed manual workflow after merge and credential setup;
    verify returned model IDs, prices, inventory and configured volume compatibility.
-   First authenticated observation completed: four candidates reported no capacity
-   under Secure / 1 GPU / CUDA 12.8; no paid execution.
-   See [results and limits](docs/evidence/preflight-42331880254.md) and
+   Authenticated CUDA comparison completed: exact 12.8 returned NONE; minimum
+   12.8 returned capacity for all four allowed models. No paid execution.
+   See [current results and limits](docs/evidence/preflight-42334557432.md) and
    [the exact inputs and acceptance checks](docs/phase-2-plan.md).
 3. **Separately authorized GPU smoke:** complete the live adapter, worker admission,
    durable intent store and independently invokable recovery before proposing a

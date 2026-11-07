@@ -28,12 +28,10 @@
   "min_vram_gb": 24,
   "gpu_count": 1,
   "compatibility": {
-    "cuda_versions": [
-      "12.8"
-    ]
+    "min_cuda_version": "12.8"
   },
   "limits": {
-    "max_gpu_hourly_usd": 1.0,
+    "max_gpu_hourly_usd": 3.0,
     "total_budget_usd": 2.0,
     "runtime_seconds": 120,
     "startup_seconds": 180,
