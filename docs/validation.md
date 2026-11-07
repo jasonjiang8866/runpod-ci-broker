@@ -1,3 +1,15 @@
+# Worker and cleanup preparation — 2026-11-07
+
+220 offline tests pass (43 new since the shared-journal tranche), with strict mypy
+across 18 modules, Ruff, wheel/sdist build and shell syntax checks. The CUDA driver
+ABI is injected in positive tests; no real GPU verification is claimed. New image
+CI builds without credentials and must fail its GPU probe on the CPU runner.
+See [approved smoke and remaining activation gates](approved-smoke.md).
+
+The proposed state-write and image-publication workflows are manual-only and
+remain unapproved for activation. The USD 20/five-hour compute authorization does
+not authorize expanding GitHub permissions.
+
 # Current validation update — 2026-11-07
 
 The durable recovery/export tranche passes 177 offline pytest cases (45 new),

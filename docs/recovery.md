@@ -10,8 +10,9 @@ The local journal is atomically replaced and fsynced before each critical state.
 A per-scope flock prevents overlapping controllers sharing that filesystem.
 `FakeProvider` persists its independent inventory and fault counters. Restoring the
 same journal/provider files reproduces a stopped simulation. `Engine.run` resumes
-execution and collection; `reconcile`/`cleanup` never create. No live destructive
-adapter exists. The engine explicitly refuses a non-fake provider.
+execution and collection; `reconcile`/`cleanup` never create. A separately prepared cleanup adapter now implements the real GET/DELETE
+contract, but is not activated in the CLI/workflows. The engine explicitly refuses
+a non-fake provider. See [activation gates](approved-smoke.md).
 
 | Interruption / failure | Implemented fake behavior | Remaining live gate |
 |---|---|---|

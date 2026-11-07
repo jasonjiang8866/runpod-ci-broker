@@ -1,0 +1,31 @@
+name: Verify shared state (manual, no RunPod)
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_state_write:
+        description: Authorize probe records in the existing broker-state branch
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.repository == 'jasonjiang8866/runpod-ci-broker' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm_state_write
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Verify conditional writes and release
+        env:
+          RCB_LEDGER_TOKEN: ${{ github.token }}
+        run: uv run --locked python -m runpod_ci_broker.state_probe
