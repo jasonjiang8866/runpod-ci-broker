@@ -8,7 +8,7 @@ budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 simulator, and a REST v2 **GET-only** preflight adapter are implemented.
 Real Pod creation, worker transport, and real cleanup are deliberately disabled.
 `--action run` refuses even a populated authorization record. Passing mock tests
-is not evidence of a GPU run. See [delivery status](docs/validation.md).
+is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).
 
 ## What it solves
 
@@ -218,10 +218,11 @@ jobs:
 
 ## Roadmap and evidence
 
-1. **This PR:** no-cost CLI, schema, planner, state machine/fakes, local tests,
+1. **Merged MVP:** no-cost CLI, schema, planner, state machine/fakes, local tests,
    workflows, three scenario templates and [current repository audit](docs/repository-audit.md).
 2. **Read-only:** use the reviewed manual workflow after merge and credential setup;
-   verify returned model IDs, prices, inventory and volume compatibility. Not yet run.
+   verify returned model IDs, prices, inventory and configured volume compatibility.
+   See [the exact inputs and acceptance checks](docs/phase-2-plan.md). Not yet run.
 3. **Separately authorized GPU smoke:** complete the live adapter, worker admission,
    durable intent store and independently invokable recovery before proposing a
    concrete GPU, reviewed image, maximum duration and total cost. No standing authorization.

@@ -92,3 +92,46 @@ def test_live_execution_disabled_even_with_approval_document(tmp_path, task, aut
     report = json.loads((tmp_path / "out/report.json").read_text())
     assert report["state"] == "EXECUTION_REFUSED"
     assert "live_execution_not_implemented" in report["blockers"]
+
+
+def test_preflight_preserves_reports_on_malformed_provider_response(tmp_path, monkeypatch, capsys):
+    from runpod_ci_broker.cli import main
+    from runpod_ci_broker.provider import Transport
+
+    def get(self, path, params):
+        return {
+            "/catalog/gpus": {
+                "gpus": [
+                    {
+                        "id": "NVIDIA GeForce RTX 4090",
+                        "price": {"secure": "TEST_SECRET_MUST_NOT_APPEAR"},
+                    }
+                ]
+            },
+            "/pods": {"pods": [], "pagination": {"hasNextPage": False}},
+            "/catalog/datacenters": {"dataCenters": []},
+        }[path]
+
+    monkeypatch.setenv("RUNPOD_API_KEY", "TEST_SECRET_MUST_NOT_APPEAR")
+    monkeypatch.setattr(Transport, "get", get)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "broker",
+            "--config",
+            "examples/simplexlora-flexible.json",
+            "--action",
+            "preflight",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+    assert main() == 2
+    report = json.loads((tmp_path / "report.json").read_text())
+    markdown = (tmp_path / "summary.md").read_text()
+    assert report["mode"] == "read_only" and report["selected"] is None
+    assert "query_status_unverified" in report["blockers"]
+    assert "catalog_schema_invalid" in markdown
+    assert "USD/GPU-hour" in markdown and "Read-only observations" in markdown
+    assert "TEST_SECRET" not in json.dumps(report) + markdown + str(capsys.readouterr())

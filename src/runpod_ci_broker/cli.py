@@ -80,6 +80,10 @@ def main() -> int:
                 inventory = {"inventory": "unverified", "query_status": exc.code}
             record = plan(task, candidates, mode="read_only")
             record["provider_observations"] = inventory
+            for field in ("query_status", "datacenter_status"):
+                if inventory.get(field) != "ok":
+                    record["blockers"].append(field + "_unverified")
+                    record["selected"] = None
             if inventory.get("inventory") != "complete":
                 record["blockers"].append("inventory_unverified")
                 record["selected"] = None

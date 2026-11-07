@@ -27,18 +27,42 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
         "|---|---|",
         rows,
         "",
+        "## Preflight outcome",
+        "",
+        "Blockers: " + (", ".join(record.get("blockers", [])) or "none"),
+        "",
+        "A candidate selection is advisory. It does not authorize paid execution.",
+        "",
         "## Candidate decisions",
         "",
-        "| GPU | Data center | Decision |",
-        "|---|---|---|",
+        "| GPU | Data center | VRAM GB | USD/GPU-hour | Capacity | Decision |",
+        "|---|---|---|---|---|---|",
     ]
     for row in record.get("decisions", []):
         c = row["candidate"]
         decision = ", ".join(row["reasons"]) or "eligible; preference then price ranking"
         # Report only controlled identifiers, escaping table separators/newlines.
-        cells = [str(c["gpu_id"]), str(c["data_center"]), decision]
+        cells = [
+            str(c["gpu_id"]),
+            str(c["data_center"]),
+            str(c["memory_gb"]),
+            str(c["hourly_usd"]),
+            c["capacity"],
+            decision,
+        ]
         cells = [s.replace("|", "\\|").replace("\n", " ") for s in cells]
         lines.append("| " + " | ".join(cells) + " |")
+    if "provider_observations" in record:
+        lines += [
+            "",
+            "## Read-only observations",
+            "",
+            "```json",
+            json.dumps(record["provider_observations"], indent=2),
+            "```",
+            "",
+            "Capacity signals are not reservations; image pull and runtime GPU checks remain unverified.",
+        ]
     lines += [
         "",
         "## Budget",
