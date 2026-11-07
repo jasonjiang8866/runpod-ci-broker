@@ -6,7 +6,8 @@ budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 
 **Current release: no-cost MVP.** Offline planning, a persistent fault-injection
 simulator, and a REST v2 **GET-only** preflight adapter are implemented.
-Real Pod creation, worker transport, and real cleanup are deliberately disabled.
+The worker/export and ownership-checked cleanup libraries are prepared, but live
+Pod creation and cleanup remain disabled in the CLI and existing workflows.
 `--action run` refuses even a populated authorization record. Passing mock tests
 is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).
 
@@ -231,6 +232,10 @@ jobs:
 ```
 
 ## Roadmap and evidence
+
+The first Broker smoke now has an approved **USD 20 / five-hour campaign ceiling**
+with USD 3/GPU-hour unit cap. [Worker, cleanup and activation gates](docs/approved-smoke.md)
+distinguish this authorization from execution: no paid Pod has been launched.
 
 1. **Merged MVP:** no-cost CLI, schema, planner, state machine/fakes, local tests,
    workflows, three scenario templates and [current repository audit](docs/repository-audit.md).
