@@ -1,5 +1,8 @@
 # Phase-one delivery and validation
 
+Historical delivery record. For the subsequent 110-test hardening change and
+current phase-2 dispatch status, see [phase-2 plan](phase-2-plan.md).
+
 Date: 2026-11-06 (client date, Asia/Singapore).
 
 ## Local evidence

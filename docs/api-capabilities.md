@@ -7,10 +7,10 @@ The implementation uses RunPod REST v2 and no GraphQL or v1 field mixing.
 | Capability | Documented interface / fields | MVP behavior and boundary |
 |---|---|---|
 | GPU catalog | `GET /v2/catalog/gpus`; `id`, `name`, `memory`, per-cloud `price`, `maxCount` | `maxCount` is a machine ceiling, not free inventory. `price` is per GPU; count multiplication belongs in the estimate. |
-| Pod capacity | `include=AVAILABILITY&product=POD&count=...&cloud=...`; `availability` and `dataCenters[].availability` | LOW/MEDIUM/HIGH are advisory capacity, NONE is explicit no capacity, missing/failed query is unknown. |
+| Pod capacity | `include=AVAILABILITY&product=POD&count=...&cloud=...`; `availability` and `dataCenters[].availability` | Regional LOW/MEDIUM/HIGH are advisory capacity; overall availability never fills a missing regional signal. NONE is explicit no capacity, missing/failed query is unknown. |
 | CUDA filter | `cudaVersions` exact versions or `minCudaVersion`, mutually exclusive | Uses exact configured version set. `cudaVersions[]` contains `version` and **`available: bool`**. No fabricated driver or compute-capability fields. |
 | Data centers | `GET /v2/catalog/datacenters` with optional GPU availability/region filters | Reads IDs/regions. Global networking capability is not Global Volume capability. |
-| Pod inventory | `GET /v2/pods`, cursor pagination | All pages required; malformed/repeated cursors are unknown. Raw environments never enter reports. |
+| Pod inventory | `GET /v2/pods`, cursor pagination | All pages required; malformed/repeated cursors, duplicate IDs and invalid Pod state/environment shapes are unknown. Raw environments never enter reports. |
 | Create / inspect / terminate | `POST /v2/pods`, `GET /v2/pods/{id}`, `DELETE /v2/pods/{id}` | Contract reviewed; only fake lifecycle implemented. No undocumented idempotency-key guarantee is assumed. |
 | Pod configuration | `name`, `image`, `gpu`, `disk`, `env`, `entrypoint`, `cmd`, `mounts`, `dataCenterIds`, `registry` | Future exec-form entrypoint must be fixed in a reviewed image; no shell interpolation. `registry` is an existing registry-credential ID. Registry creation is outside this MVP. |
 | Pod status / cost | PROVISIONING, STARTING, RUNNING, EXITED, ERROR, TERMINATED; `cost` | Provider state is not experiment acceptance. Hourly compute rate is not accrued cost or final invoice. |

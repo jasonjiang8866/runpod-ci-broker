@@ -159,3 +159,109 @@ def test_missing_live_catalog_rows_never_become_mock_evidence(task):
 
     report = plan(task, [], mode="read_only")
     assert all(d["candidate"]["evidence"] == "read_only" for d in report["decisions"])
+
+
+@pytest.mark.parametrize("locations", [[{"id": "US-KS-2"}], []])
+def test_overall_high_never_proves_regional_capacity(task, locations):
+    def get(path, params):
+        value = reply(path, params)
+        if path == "/catalog/gpus":
+            value["gpus"][0]["dataCenters"] = locations
+        return value
+
+    candidates, observations = ReadOnlyRunPod(get=get).snapshot(task)
+    assert candidates[0].capacity == "unknown"
+    assert observations["catalog_models"][0]["overall_capacity_signal"] == "HIGH"
+    assert observations["capacity_is_reservation"] is False
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("memory", -1),
+        ("memory", "MUST_NOT_LEAK"),
+        ("price", None),
+        ("price", {"secure": float("nan")}),
+        ("price", {"secure": "MUST_NOT_LEAK"}),
+        ("maxCount", {"secure": "MUST_NOT_LEAK"}),
+        ("dataCenters", ["MUST_NOT_LEAK"]),
+        ("dataCenters", [{"id": "US-KS-2", "availability": "MUST_NOT_LEAK"}]),
+        ("cudaVersions", [{"version": "12.8", "available": "MUST_NOT_LEAK"}]),
+        ("availability", "MUST_NOT_LEAK"),
+    ],
+)
+def test_invalid_catalog_fields_fail_closed_without_raw_values(task, field, value):
+    def get(path, params):
+        response = reply(path, params)
+        if path == "/catalog/gpus":
+            response["gpus"][0][field] = value
+        return response
+
+    candidates, observations = ReadOnlyRunPod(get=get).snapshot(task)
+    assert observations["query_status"] == "catalog_schema_invalid"
+    assert all(c.error == "catalog_schema_invalid" for c in candidates)
+    assert "MUST_NOT_LEAK" not in json.dumps(observations) + str(candidates)
+
+
+@pytest.mark.parametrize("rows", [None, "MUST_NOT_LEAK", [None]])
+def test_invalid_catalog_collection_is_not_empty_inventory(task, rows):
+    def get(path, params):
+        return {"gpus": rows} if path == "/catalog/gpus" else reply(path, params)
+
+    candidates, observations = ReadOnlyRunPod(get=get).snapshot(task)
+    assert observations["query_status"] == "catalog_schema_invalid"
+    assert all(c.capacity == "unknown" for c in candidates)
+    assert "MUST_NOT_LEAK" not in json.dumps(observations)
+
+
+@pytest.mark.parametrize("field,value", [("env", None), ("env", []), ("status", "FUTURE_STATUS")])
+def test_invalid_pod_inventory_never_implies_empty_scope(task, field, value):
+    def get(path, params):
+        response = reply(path, params)
+        if path == "/pods":
+            response["pods"][0][field] = value
+        return response
+
+    _, observations = ReadOnlyRunPod(get=get).snapshot(task)
+    assert observations["inventory"] == "inventory_schema_invalid"
+    assert "scope_active_pod_count" not in observations
+    assert "MUST_NOT_LEAK" not in json.dumps(observations)
+
+
+@pytest.mark.parametrize("pagination", [None, [], {"hasNextPage": "false"}])
+def test_malformed_pagination_is_incomplete(pagination):
+    provider = ReadOnlyRunPod(get=lambda *_: {"pods": [], "pagination": pagination})
+    with pytest.raises(ProviderError, match="inventory_incomplete"):
+        provider.listing("/pods", "pods")
+
+
+def test_repeated_resource_across_pages_is_not_complete():
+    def get(path, params):
+        return {
+            "pods": [{"id": "same"}],
+            "pagination": {"hasNextPage": "cursor" not in params, "nextCursor": "next"},
+        }
+
+    with pytest.raises(ProviderError, match="inventory_duplicate_id"):
+        ReadOnlyRunPod(get=get).listing("/pods", "pods")
+
+
+def test_exited_pod_still_blocks_its_scope(task):
+    def get(path, params):
+        response = reply(path, params)
+        if path == "/pods":
+            response["pods"][0].update(
+                status="EXITED", env={"RCB_TOOL": "runpod-ci-broker/v1", "RCB_SCOPE": task.scope}
+            )
+        return response
+
+    _, observations = ReadOnlyRunPod(get=get).snapshot(task)
+    assert observations["active_pod_count"] == observations["scope_active_pod_count"] == 1
+
+
+def test_malformed_datacenter_projection_is_reported(task):
+    def get(path, params):
+        return {"dataCenters": [None]} if path == "/catalog/datacenters" else reply(path, params)
+
+    _, observations = ReadOnlyRunPod(get=get).snapshot(task)
+    assert observations["datacenter_status"] == "datacenter_schema_invalid"
