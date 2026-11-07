@@ -7,6 +7,10 @@ on:
         type: choice
         options: [simplexlora-flexible, spleeter-strict, flashattention-hardware]
         default: simplexlora-flexible
+      diagnose_cuda:
+        description: Compare CUDA filters (diagnostic only; never relax task admission)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -31,12 +35,19 @@ jobs:
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           EXAMPLE: ${{ inputs.example }}
+          DIAGNOSE_CUDA: ${{ inputs.diagnose_cuda }}
         run: |
           case "$EXAMPLE" in
             simplexlora-flexible|spleeter-strict|flashattention-hardware) ;;
             *) exit 2 ;;
           esac
-          uv run --locked --no-dev runpod-ci-broker --config "examples/$EXAMPLE.json" --action preflight --output out
+          diagnostic_args=()
+          case "$DIAGNOSE_CUDA" in
+            true) diagnostic_args+=(--diagnose-cuda) ;;
+            false|"") ;;
+            *) exit 2 ;;
+          esac
+          uv run --locked --no-dev runpod-ci-broker --config "examples/$EXAMPLE.json" --action preflight --output out "${diagnostic_args[@]}"
       - name: Publish preflight summary
         if: always()
         run: |

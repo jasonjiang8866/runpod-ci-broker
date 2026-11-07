@@ -93,6 +93,10 @@ def reasons(task: Task, c: Candidate) -> list[str]:
     comp = task.compatibility
     if comp.cuda_versions and not set(c.cuda_versions) & set(comp.cuda_versions):
         out.append("cuda_incompatible" if c.cuda_versions else "cuda_unknown")
+    if comp.min_cuda_version and not any(
+        version(v) >= version(comp.min_cuda_version) for v in c.cuda_versions
+    ):
+        out.append("cuda_incompatible" if c.cuda_versions else "cuda_unknown")
     if comp.exact_driver or comp.min_driver:
         if c.driver is None:
             out.append("driver_unknown")
