@@ -3,6 +3,19 @@
     "Compatibility": {
       "additionalProperties": false,
       "properties": {
+        "min_cuda_version": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+\\.\\d+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Cuda Version"
+        },
         "cuda_versions": {
           "default": [],
           "items": {

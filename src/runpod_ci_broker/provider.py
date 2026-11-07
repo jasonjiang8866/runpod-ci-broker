@@ -143,6 +143,8 @@ class ReadOnlyRunPod:
         }
         if task.compatibility.cuda_versions:
             query["cudaVersions"] = ",".join(task.compatibility.cuda_versions)
+        elif task.compatibility.min_cuda_version:
+            query["minCudaVersion"] = task.compatibility.min_cuda_version
         started = self.now()
         catalog: dict[str, Any] = {}
         attempts = 0
@@ -258,6 +260,8 @@ class ReadOnlyRunPod:
                     "per_gpu_hourly_usd": gpu.price.get(task.cloud.lower()),
                     "machine_gpu_count_ceiling": gpu.maxCount.get(task.cloud.lower()),
                     "overall_capacity_signal": gpu.availability,
+                    "reported_cuda_versions": [v.model_dump() for v in gpu.cudaVersions],
+                    "data_centers": [dc.model_dump() for dc in gpu.dataCenters],
                 }
             )
             versions = [c.version for c in gpu.cudaVersions if c.available]

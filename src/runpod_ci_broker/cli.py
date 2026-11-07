@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .diagnostics import diagnose_cuda
 from .fake import FakeProvider
 from .lifecycle import Engine
 from .models import Authorization, Candidate, Task
@@ -27,6 +28,11 @@ def main() -> int:
         default="dry-run",
         choices=["dry-run", "preflight", "simulate", "run", "reconcile", "cleanup"],
     )
+    parser.add_argument(
+        "--diagnose-cuda",
+        action="store_true",
+        help="preflight only: compare exact, unfiltered and minimum CUDA reads; never admit from diagnostics",
+    )
     parser.add_argument("--mock-catalog", type=Path)
     parser.add_argument("--faults", type=Path, help="fake fault counts, simulation only")
     parser.add_argument("--state-dir", type=Path, default=Path(".broker"))
@@ -36,6 +42,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
+        if args.diagnose_cuda and args.action != "preflight":
+            raise ValueError("cuda_diagnostics_require_read_only_preflight")
         task = Task.model_validate_json(args.config.read_text())
         candidates = (
             [Candidate.model_validate(c) for c in json.loads(args.mock_catalog.read_text())]
@@ -71,7 +79,13 @@ def main() -> int:
             if args.mock_catalog or args.faults:
                 raise ValueError("cannot_mix_mock_and_read_only_evidence")
             try:
-                candidates, inventory = ReadOnlyRunPod().snapshot(task)
+                readonly_provider = ReadOnlyRunPod()
+                deadline = readonly_provider.now() + task.limits.max_wait_seconds
+                candidates, inventory = readonly_provider.snapshot(task)
+                if args.diagnose_cuda:
+                    inventory["cuda_diagnostics"] = diagnose_cuda(
+                        task, readonly_provider, inventory, deadline
+                    )
             except ProviderError as exc:
                 candidates = [
                     Candidate(gpu_id=g, error=exc.code, evidence="read_only")

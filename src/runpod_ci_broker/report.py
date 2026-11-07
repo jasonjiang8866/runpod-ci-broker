@@ -52,6 +52,34 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
         ]
         cells = [s.replace("|", "\\|").replace("\n", " ") for s in cells]
         lines.append("| " + " | ".join(cells) + " |")
+    diagnostic = record.get("provider_observations", {}).get("cuda_diagnostics")
+    if diagnostic:
+        lines += [
+            "",
+            "## CUDA filter comparison (diagnostic only)",
+            "",
+            "Status: " + diagnostic["status"],
+            "",
+            "| GPU | Exact CUDA | Minimum CUDA | No CUDA filter | Inference |",
+            "|---|---|---|---|---|",
+        ]
+        for comparison in diagnostic["comparisons"]:
+            signals = comparison["signals"]
+            cells = [
+                comparison["gpu_id"],
+                str(signals.get("exact_cuda")),
+                str(signals.get("minimum_cuda")),
+                str(signals.get("no_cuda_filter")),
+                comparison["inference"],
+            ]
+            lines.append(
+                "| " + " | ".join(x.replace("|", "\\|").replace("\n", " ") for x in cells) + " |"
+            )
+        lines += [
+            "",
+            "These are overall catalog signals, not placement admission. Missing or failed probes are unknown.",
+            "Sequential queries can observe capacity changes; the comparison does not prove causation or authorize execution.",
+        ]
     if "provider_observations" in record:
         lines += [
             "",

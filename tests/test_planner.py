@@ -83,7 +83,7 @@ def test_numeric_validation(task, field, value):
 def test_budget_counts_full_lifetimes_retries_storage(task):
     a = estimate(task)
     seconds = (180 + 120 + 60 + 60) * 2
-    expected = seconds / 3600 * (1.0 + 0.02) + 0.1 + 0.01 + 0.2
+    expected = seconds / 3600 * (3.0 + 0.02) + 0.1 + 0.01 + 0.2
     assert a["estimated_total_usd"] >= expected
     assert a["supplier_bill_usd"] is None and a["provider_hard_cap"] is False
 
