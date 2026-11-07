@@ -174,10 +174,11 @@ events, attempts, candidate decisions, costs and cleanup evidence. Collection
 failure retries until its limit/deadline, then terminates compute while retaining
 diagnostics. It never holds a billable GPU indefinitely to save results.
 
-A real worker export transport and off-runner durable journal are **phase-3 gates**.
-The planned transport is a per-task authenticated HTTPS result endpoint with bounded
-streaming and verified hashes, plus an independently accessible durable checkpoint
-location when required. The worker receives only an ephemeral result capability;
+A shared conditional journal and bounded HTTPS result transport are now implemented
+and tested offline; their authenticated integrations remain **phase-3 gates**.
+See [implementation and recovery drills](docs/durable-recovery.md). The result-only
+endpoint uses a per-task capability, byte/time limits and verified hashes. An
+independently accessible durable checkpoint location is still needed when required. The worker receives only an ephemeral result capability;
 never the account API key. GitHub artifacts are an export destination after the
 runner has verified the bundle, not a transactionally durable create-intent store.
 See [recovery and export contract](docs/recovery.md).
@@ -239,8 +240,9 @@ jobs:
    12.8 returned capacity for all four allowed models. No paid execution.
    See [current results and limits](docs/evidence/preflight-42334557432.md) and
    [the exact inputs and acceptance checks](docs/phase-2-plan.md).
-3. **Separately authorized GPU smoke:** complete the live adapter, worker admission,
-   durable intent store and independently invokable recovery before proposing a
+3. **GPU smoke preparation:** shared journal, prepared GitHub Contents adapter and
+   bounded result-only HTTP export have offline tests. Complete authenticated
+   integration, live adapter, worker admission and independent lock handover before proposing a
    concrete GPU, reviewed image, maximum duration and total cost. No standing authorization.
 4. **Separate integration PR:** simplest smoke first; no business repository changes
    are included. Strict numerical checks and hardware groups follow later.

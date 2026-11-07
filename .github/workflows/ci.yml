@@ -29,6 +29,8 @@ jobs:
         run: |
           uv run --locked runpod-ci-broker --config examples/simplexlora-flexible.json --mock-catalog examples/mock-catalog.json --output out/plan
           uv run --locked runpod-ci-broker --config examples/simplexlora-flexible.json --action simulate --mock-catalog examples/mock-catalog.json --output out/simulation
+          uv run --locked runpod-ci-broker --config examples/simplexlora-flexible.json --action simulate --mock-catalog examples/mock-catalog.json --shared-mock-ledger .broker/shared.db --state-dir .broker/shared-drill --output out/shared
+          uv run --locked runpod-ci-broker --config examples/simplexlora-flexible.json --action reconcile --mock-catalog examples/mock-catalog.json --shared-mock-ledger .broker/shared.db --state-dir .broker/shared-drill --output out/shared-recovered
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

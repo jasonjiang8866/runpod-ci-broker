@@ -83,13 +83,17 @@ class Results(Model):
     @field_validator("required_files")
     @classmethod
     def paths(cls, value: list[str]) -> list[str]:
-        if not value or len(set(value)) != len(value):
+        if not value or len(value) > 128 or len(set(value)) != len(value):
             raise ValueError("unique required files required")
         for p in value:
             if not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", p):
                 raise ValueError("relative artifact path required")
             if any(x in {".", ".."} for x in p.split("/")):
                 raise ValueError("path traversal")
+        if "manifest.json" in value or any(
+            other.startswith(p + "/") for p in value for other in value if p != other
+        ):
+            raise ValueError("reserved or overlapping artifact paths")
         return value
 
     @field_validator("path")

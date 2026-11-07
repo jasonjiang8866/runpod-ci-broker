@@ -12,12 +12,13 @@ from pydantic import ValidationError
 
 from .diagnostics import diagnose_cuda
 from .fake import FakeProvider
+from .ledger import SharedJournal, SQLiteStore
 from .lifecycle import Engine
 from .models import Authorization, Candidate, Task
 from .planner import authorize, plan
 from .provider import ProviderError, ReadOnlyRunPod
 from .report import write_report
-from .storage import Journal
+from .storage import Journal, TaskJournal
 
 
 def main() -> int:
@@ -36,6 +37,11 @@ def main() -> int:
     parser.add_argument("--mock-catalog", type=Path)
     parser.add_argument("--faults", type=Path, help="fake fault counts, simulation only")
     parser.add_argument("--state-dir", type=Path, default=Path(".broker"))
+    parser.add_argument(
+        "--shared-mock-ledger",
+        type=Path,
+        help="offline SQLite CAS journal; simulate/reconcile/cleanup only",
+    )
     parser.add_argument("--output", type=Path, default=Path("out"))
     parser.add_argument(
         "--authorization", type=Path, help="reviewed execution context, NOT human approval"
@@ -44,6 +50,8 @@ def main() -> int:
     try:
         if args.diagnose_cuda and args.action != "preflight":
             raise ValueError("cuda_diagnostics_require_read_only_preflight")
+        if args.shared_mock_ledger and args.action not in {"simulate", "reconcile", "cleanup"}:
+            raise ValueError("shared_ledger_mock_only")
         task = Task.model_validate_json(args.config.read_text())
         candidates = (
             [Candidate.model_validate(c) for c in json.loads(args.mock_catalog.read_text())]
@@ -118,8 +126,13 @@ def main() -> int:
             ):
                 raise ValueError("invalid_fault_counts")
             provider = FakeProvider(candidates, args.state_dir / "fake-provider.json", faults)
-            journal = Journal(args.state_dir, task.scope, task.experiment_id)
-            result_dir = journal.scope_dir / (task.fingerprint() + "-results")
+            local = Journal(args.state_dir, task.scope, task.experiment_id)
+            journal: TaskJournal = (
+                SharedJournal(SQLiteStore(args.shared_mock_ledger), task.scope, task.experiment_id)
+                if args.shared_mock_ledger
+                else local
+            )
+            result_dir = local.scope_dir / (task.fingerprint() + "-results")
             engine = Engine(
                 task,
                 provider,
@@ -141,6 +154,7 @@ def main() -> int:
             else:
                 record = engine.reconcile(cleanup_only=args.action == "cleanup")
             record["simulation_authorization_only"] = True
+            record["journal_backend"] = "shared_sqlite_mock" if args.shared_mock_ledger else "local"
         write_report(record, args.output)
         print(
             json.dumps(

@@ -64,6 +64,11 @@ No alternate trigger is added to work around it.
 
 ## Development after the observation
 
+The next [implementation tranche](durable-recovery.md) adds the shared journal,
+prepared GitHub Contents adapter and bounded result export, verified offline.
+Authenticated remote integration and live lock handover remain gates.
+
+
 | Work | Completion evidence | Paid resources |
 |---|---|---|
 | Resolve real response/schema differences | Sanitized fixtures, regression cases and a new readonly report | None |
