@@ -1,5 +1,11 @@
 # Official API capability review
 
+**Live verification update, 2026-11-07:** all four exact GPU IDs/VRAM and catalog
+prices below were returned by the authenticated preflight. Catalog, data centers
+and Pod inventory queries succeeded. [Run evidence and exact filters](evidence/preflight-42331880254.md).
+The original documentation review below is historical; other permissions and live
+create/worker/cleanup capabilities remain unverified.
+
 Checked 2026-11-06 (client date, Asia/Singapore). These are documentation/schema
 observations, **not authenticated account queries**. Current source audit is separate.
 The implementation uses RunPod REST v2 and no GraphQL or v1 field mixing.

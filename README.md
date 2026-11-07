@@ -222,7 +222,10 @@ jobs:
    workflows, three scenario templates and [current repository audit](docs/repository-audit.md).
 2. **Read-only:** use the reviewed manual workflow after merge and credential setup;
    verify returned model IDs, prices, inventory and configured volume compatibility.
-   See [the exact inputs and acceptance checks](docs/phase-2-plan.md). Not yet run.
+   First authenticated observation completed: four candidates reported no capacity
+   under Secure / 1 GPU / CUDA 12.8; no paid execution.
+   See [results and limits](docs/evidence/preflight-42331880254.md) and
+   [the exact inputs and acceptance checks](docs/phase-2-plan.md).
 3. **Separately authorized GPU smoke:** complete the live adapter, worker admission,
    durable intent store and independently invokable recovery before proposing a
    concrete GPU, reviewed image, maximum duration and total cost. No standing authorization.

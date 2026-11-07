@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "evidence_mode": "read_only",
+  "representation": "curated transcription of Actions summary; not raw API or downloaded artifact",
+  "run_url": "https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/42331880254",
+  "run_id": "42331880254",
+  "run_attempt": 1,
+  "broker_sha": "4401544ad9c46ad62024f455507ebaafb3fce82e",
+  "observed_at": "2026-11-07T02:59:58.639849+00:00",
+  "config_fingerprint": "2852b3442739162bf4408c95c9ddc9cce9b12e12dfda9e63451f5c94694d4142",
+  "query": {
+    "include": "AVAILABILITY",
+    "product": "POD",
+    "count": 1,
+    "cloud": "SECURE",
+    "cudaVersions": "12.8"
+  },
+  "query_status": "ok",
+  "query_attempts": 1,
+  "inventory": "complete",
+  "active_pod_count": 0,
+  "scope_active_pod_count": 0,
+  "datacenter_status": "ok",
+  "selected": null,
+  "blockers": [
+    "no_eligible_candidate"
+  ],
+  "process_exit_code": 2,
+  "github_conclusion": "failure",
+  "paid_resources_created": false,
+  "gpu_executed": false,
+  "volume_access_verified": false,
+  "image_pull_verified": false,
+  "artifact": {
+    "id": 13558246204,
+    "name": "broker-preflight-42331880254-1",
+    "size_bytes": 3966,
+    "github_reported_sha256": "030346656d8566a9f6043d7276534ddccf5e50497d6b04b39189508b0a5ff5af",
+    "upload_confirmed": true,
+    "local_download_verified": false,
+    "digest_independently_verified": false
+  },
+  "candidates": [
+    {
+      "gpu_id": "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb",
+      "memory_gb": 24,
+      "per_gpu_hourly_usd": 0.69,
+      "capacity": "none",
+      "data_center": null,
+      "reasons": [
+        "region_unknown",
+        "no_capacity",
+        "cuda_unknown"
+      ]
+    },
+    {
+      "gpu_id": "NVIDIA GeForce RTX 4090",
+      "memory_gb": 24,
+      "per_gpu_hourly_usd": 0.89,
+      "capacity": "none",
+      "data_center": null,
+      "reasons": [
+        "region_unknown",
+        "no_capacity",
+        "cuda_unknown"
+      ]
+    },
+    {
+      "gpu_id": "NVIDIA GeForce RTX 3090",
+      "memory_gb": 24,
+      "per_gpu_hourly_usd": 0.5,
+      "capacity": "none",
+      "data_center": null,
+      "reasons": [
+        "region_unknown",
+        "no_capacity",
+        "cuda_unknown"
+      ]
+    },
+    {
+      "gpu_id": "NVIDIA GeForce RTX 5090",
+      "memory_gb": 32,
+      "per_gpu_hourly_usd": 1.19,
+      "capacity": "none",
+      "data_center": null,
+      "reasons": [
+        "region_unknown",
+        "price_exceeded",
+        "no_capacity",
+        "cuda_unknown"
+      ]
+    }
+  ]
+}
