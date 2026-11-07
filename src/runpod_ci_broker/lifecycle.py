@@ -12,7 +12,7 @@ from .models import Authorization, Candidate, Task
 from .planner import authorize, plan, reasons
 from .provider import ProviderError, delay
 from .results import save_bundle, verify_saved
-from .storage import Journal
+from .storage import TaskJournal
 
 TERMINAL = {"ACCEPTED", "REJECTED", "NO_CAPACITY", "BUDGET_INSUFFICIENT", "PREFLIGHT_BLOCKED"}
 EDGES = {
@@ -55,7 +55,7 @@ class Engine:
         self,
         task: Task,
         provider: FakeProvider,
-        journal: Journal,
+        journal: TaskJournal,
         results_dir: Path,
         run_id: str = "local-mock",
     ):
@@ -191,7 +191,9 @@ class Engine:
         self.transition("CLEANUP_PENDING")
 
     def accept(self) -> None:
-        self.r["facts"]["results_saved"] = verify_saved(self.results_dir, self.task)
+        self.r["facts"]["results_saved"] = verify_saved(
+            self.results_dir, self.task, self.r["pod_id"]
+        )
         passed = (
             self.r["facts"]["experiment_passed"] is True
             and self.r["facts"]["results_saved"]
@@ -378,7 +380,9 @@ class Engine:
             for _ in range(max_steps):
                 state = self.r["state"]
                 if state in TERMINAL:
-                    if state == "ACCEPTED" and not verify_saved(self.results_dir, self.task):
+                    if state == "ACCEPTED" and not verify_saved(
+                        self.results_dir, self.task, self.r["pod_id"]
+                    ):
                         self.r["facts"]["results_saved"] = False
                         self.r["artifact_status"] = "previous_export_missing_or_corrupt"
                         self.transition("REJECTED")

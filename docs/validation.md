@@ -1,3 +1,14 @@
+# Current validation update — 2026-11-07
+
+The durable recovery/export tranche passes 177 offline pytest cases (45 new),
+strict mypy across 14 modules, Ruff lint/format, package build, and independent
+simulate/reconcile CLI calls using the shared SQLite journal. CI runs the same
+credential-free drills. New tests include real local processes and a loopback HTTP
+server, not authenticated GitHub ledger or RunPod proxy calls. See
+[remaining live gates](durable-recovery.md#evidence-and-remaining-live-gates).
+
+The earlier evidence below remains historical.
+
 # Phase-one delivery and validation
 
 Historical delivery record. For the subsequent 110-test hardening change and

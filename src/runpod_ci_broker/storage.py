@@ -8,9 +8,16 @@ import json
 import os
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+
+class TaskJournal(Protocol):
+    def lock(self) -> AbstractContextManager[None]: ...
+    def read(self) -> dict[str, Any] | None: ...
+    def write(self, record: dict[str, Any]) -> None: ...
+    def other_unresolved(self) -> bool: ...
 
 
 def atomic_json(path: Path, data: Any) -> None:

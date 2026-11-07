@@ -1,5 +1,9 @@
 # Recovery and result transport contract
 
+The shared journal and result-only HTTPS transport implementation is documented in
+[durable recovery](durable-recovery.md). Its tests are offline; the live adapter
+and permission-bearing workflows remain disabled.
+
 ## What is implemented now
 
 The local journal is atomically replaced and fsynced before each critical state.
@@ -27,7 +31,7 @@ record fails closed; raw name-prefix cleanup and account-wide deletion are forbi
 A known Pod ID and two complete absence observations are required for mock deletion
 confirmation. The run ID is attribution; task identity is stable across reruns.
 
-## Phase-three export design (not implemented)
+## Phase-three worker/export design (partially implemented)
 
 1. A reviewed immutable worker image includes a generic wrapper. Before starting
    user code, capture `nvidia-smi`, CUDA runtime/driver, GPU UUID/model/count/VRAM,
@@ -51,7 +55,8 @@ confirmation. The run ID is attribution; task identity is stable across reruns.
    do not create a recovery Pod or prolong GPU billing without separate authority.
 
 Current `save_bundle` validates a supplied in-memory fake bundle and saves it
-outside fake Pod storage. It is **not** the network exporter. The real design must
+outside fake Pod storage. The new `collect_https` implements bounded network collection into a verified
+staging directory; its live RunPod integration remains unverified. The full design must
 also protect against process restarts, partial upload and large streaming results.
 No durable-storage provisioning is authorized by the design document.
 
