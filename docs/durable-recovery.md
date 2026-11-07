@@ -1,10 +1,12 @@
 # Durable recovery and result transport: implementation tranche
 
-This change advances phase 3 preparation, without enabling paid execution. The
-live RunPod adapter remains GET-only and `Engine` still accepts only `FakeProvider`.
-The GitHub Contents and RunPod HTTPS result adapters below are implemented, but
-**their authenticated integration has not been exercised**. No new workflow
-permissions, credential, schedule, storage or cloud resource is provisioned.
+This tranche advanced phase 3 preparation without enabling paid execution.
+`Engine` still accepts only `FakeProvider`. A separately approved follow-up has
+verified real GitHub Contents conditional writes/conflicts and release, and
+published the worker image. See [activation evidence](evidence/activation-20261107.md).
+Live RunPod proxy export, paid controller integration and lock handover remain
+unverified; the separate ownership-checked GET/DELETE adapter is not enabled by
+the CLI or workflows. No RunPod resources have been created.
 
 ## Shared intent and scope serialization
 
@@ -26,7 +28,7 @@ There are two storage implementations:
 | Backend | Implemented behavior | Verified boundary |
 |---|---|---|
 | `SQLiteStore` | Transactional compare-and-swap, shared file, independent processes | Real local concurrency and process-crash tests; same shared disk only |
-| `GitHubContentsStore` | GET/PUT fixed `api.github.com` Contents path, old blob SHA on update, base64/blob-hash validation, no redirects or write retries | HTTP contract fixtures only; real GitHub writes not exercised |
+| `GitHubContentsStore` | GET/PUT fixed `api.github.com` Contents path, old blob SHA on update, base64/blob-hash validation, no redirects or write retries | HTTP fixtures plus real manual write/conflict/release probe; stopped-controller handover remains unverified |
 
 The prepared remote backend requires an **existing** `broker-state` branch and
 an explicitly supplied repository identifier. It never creates a branch, changes
@@ -124,15 +126,17 @@ the collection/cleanup reserve.
   collection and deletion failures recover through a new journal; foreign resources
   remain protected by the existing ownership checks; lost journal writes reconcile
   by read-back, and unconfirmed intent never reaches create.
-- Still unverified: authenticated remote ledger round trip/conflict behavior, live
-  lock handover, immutable worker image, actual CUDA admission/execution, private
+- Now verified separately: authenticated remote ledger round trip/conflict behavior
+  and immutable public worker publication; see the activation evidence above.
+- Still unverified: live lock handover, actual CUDA admission/execution, private
   image pull, live proxy export, GitHub artifact receipt and RunPod deletion checks.
 
-The next implementation tranche is the pinned worker and live recovery/controller
-adapter. Activation will require a separately reviewed minimal permission change,
-fixed image digest and concrete smoke specification with total experiment budget,
-GPU allowlist, runtime limit and cleanup reserve. The approved USD 3/GPU-hour price
-ceiling remains unchanged; it is not a total spend authorization.
+The next implementation tranche is the live recovery/controller integration.
+The pinned worker and separate manual state/publication permissions are now approved.
+The [campaign approval](approved-smoke.md) is USD 20 total, five hours and
+USD 3/GPU-hour, with the four-model allowlist and one active single-GPU Pod.
+Use its short first-smoke specification and shared cleanup reserve; do not ask for
+the same compute authorization again or reset its allowance on retries.
 
 Official contracts consulted on 2026-11-07:
 

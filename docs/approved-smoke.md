@@ -17,7 +17,7 @@ cost. No provider-level total-dollar hard cap has been verified.
 or a substitute for trusted manual workflow context. Actual billed cost is unknown;
 no GPU expense has been incurred by this conversation's tool actions.
 
-## What this PR prepares
+## Implemented worker and cleanup preparation
 
 - A small Python worker image, with a base resolved to its SHA256 before build,
   `uv.lock`, source revision baked into the image, and an exec-form fixed entrypoint.
@@ -49,11 +49,13 @@ name or 24GB memory alone does not prove the selected MIG profile; an ambiguous 
 identity is refused and recorded. Do not remove MIG from the overall allowlist or
 silently claim its identity was checked.
 
-The image is not yet published and no deployable digest is claimed. Ordinary PR CI
-builds it without credentials and checks that a CPU runner returns a failed GPU
-probe. That is image/negative-admission evidence, not positive GPU verification.
+The image was published from main `2e6fe6930c02fc2469079a1d8e64025562aff07f`:
+`ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:d1a450f816d71169c29eb53217d869baa88d9eeaa156911f06b83b8a93f9ad11`.
+Ordinary PR CI builds it without credentials and checks that a CPU runner returns
+a failed GPU probe. Publication and CPU refusal do not verify positive GPU execution.
+See [activation evidence](evidence/activation-20261107.md) for verified boundaries.
 
-## Concrete manual workflows awaiting permission approval
+## Approved manual workflows
 
 | Workflow | New job permission | Exact effect |
 |---|---|---|
@@ -63,19 +65,21 @@ probe. That is image/negative-admission evidence, not positive GPU verification.
 Both are manual-only, main-only, constrained to this repository and have an explicit
 confirmation input defaulting to false. They do not run from a PR, do not use
 `pull_request_target`, and do not access `RUNPOD_API_KEY`. The user-approved compute
-budget does not authorize these new permissions. Leave this PR unmerged until the
-permission change is approved. Ordinary image-build/CPU tests retain Contents read.
+budget did not by itself authorize these permissions. The owner separately approved
+PR #7 merge, both manual workflows, the state branch and public image publication.
+PR #7 is merged and both workflows succeeded. Ordinary image-build/CPU tests retain
+Contents read.
 
 **The Contents permission is repository-wide**, not technically branch-scoped.
 The prepared client restricts its write path to `broker-state/scopes/<hash>.json`;
 that code restriction must not be described as a token-enforced permission boundary.
-The branch does not exist yet and must be explicitly created in this repository
-before the state probe. Probe records have no task secrets and no GPU intent.
+The branch was created at merge `2e6fe6930c02fc2469079a1d8e64025562aff07f`.
+The real probe verified conditional-write conflict and release. Its final record
+has `holder: null`, empty `records`, and no task secrets or GPU intent.
 
-The requested image publication is for a public worker image. GHCR may default a
-new package to private: publishing alone does not establish public pull access.
-Verify anonymous digest pull before a GPU launch; do not inject a GitHub management
-token into a Pod or silently change registry visibility without authorization.
+The package page reports Public. Anonymous manifest/config/layer verification is
+recorded separately from authenticated publishing; neither is evidence of a RunPod
+image pull. Never inject a GitHub management token into a Pod.
 
 ## First attempt and remaining implementation
 
@@ -89,8 +93,8 @@ headroom rather than automatically spending it.
 
 Before creation, finish and verify:
 
-1. The two manual integration workflows after approval, including public immutable
-   image pull and exact source/image provenance. No compute is needed for these.
+1. Retain the completed state-probe and public immutable image evidence. These
+   preparation checks needed no RunPod compute.
 2. The paid create/controller integration with the shared journal and campaign-wide
    budget/time accounting. The public `run` command still deliberately refuses live
    execution; this PR does not bypass that guard.
