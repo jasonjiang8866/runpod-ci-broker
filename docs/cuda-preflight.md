@@ -91,7 +91,9 @@ still exits 2 even if a diagnostic query finds a machine elsewhere.
 132 offline tests pass, including 22 new cases for numeric CUDA floors, retained
 legacy fingerprints, strict-task locks, 5090 pricing, shared query caps, failures,
 redaction and CLI isolation. Strict mypy passes 12 modules. Ruff and wheel/sdist
-builds pass. **The revised live comparison has not been dispatched.**
+builds pass. **Live comparison completed successfully:**
+[run 42334557432](evidence/preflight-42334557432.md) returned exact NONE and minimum/unfiltered
+capacity for all four models. This is catalog evidence, not GPU execution.
 
 Sources checked 2026-11-07:
 

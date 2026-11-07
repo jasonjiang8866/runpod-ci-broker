@@ -1,5 +1,12 @@
 # Phase 2: authenticated, read-only evidence
 
+**Update, 2026-11-07:** PR #2 and #4 are merged. The exact-only preflight found
+no capacity, while the later minimum-CUDA comparison found all four models eligible.
+See [latest run evidence](evidence/preflight-42334557432.md) and the
+[earlier observation](evidence/preflight-42331880254.md). The sections
+below retain the pre-run plan for provenance; the evidence record supersedes
+its statements that dispatch and Secret validity were unverified.
+
 Status checked 2026-11-07. PR #1 is merged at
 `6de7cd7733c8fc8123bdff1a6fce1a0014704e6b`; main CI run `42330437634` passed.
 The owner reports adding repository secret `RUNPOD_API_KEY`. Secret contents are
