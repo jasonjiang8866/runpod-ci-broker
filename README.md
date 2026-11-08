@@ -6,8 +6,10 @@ budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 
 **Current release: no-cost MVP.** Offline planning, a persistent fault-injection
 simulator, and a REST v2 **GET-only** preflight adapter are implemented.
-The worker/export and ownership-checked cleanup libraries are prepared, but live
-Pod creation and cleanup remain disabled in the CLI and existing workflows.
+The worker/export and ownership-checked cleanup libraries are prepared. A separate
+[fixed-campaign controller and recovery workflow](docs/live-controller.md) now have
+offline fault tests and await activation review; no real GPU execution is claimed.
+Generic Pod creation and cleanup remain disabled in the default CLI.
 `--action run` refuses even a populated authorization record. Passing mock tests
 is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).
 
@@ -156,8 +158,9 @@ fee; external destinations and Global Volume requests still need their own revie
 No verified provider-level **per-task total-dollar hard cap** is available in the
 reviewed contract. Account balance/hourly limits are not that guarantee. Runner
 loss, delayed inventory and provider outages can defeat software deadlines.
-**Broker does not promise zero overspend.** Paid execution stays disabled until
-independent recovery and durable intent storage are implemented and reviewed.
+**Broker does not promise zero overspend.** The narrow paid controller requires
+reviewed manual workflow activation, a durable intent record and independent
+recovery; see [its exact boundaries](docs/live-controller.md).
 
 Local `flock` serializes one state directory/scope; unresolved records block another
 experiment in that scope. Provider inventory is a second check, not an atomic lock.
@@ -196,7 +199,9 @@ See [recovery and export contract](docs/recovery.md).
 - Image publication is a separately approved, manual main-only workflow with
   `packages: write`. The manual state probe uses repository-wide `contents: write`.
   Neither receives the RunPod key. See [activation evidence](docs/evidence/activation-20261107.md).
-- No `pull_request_target`, paid workflow or implicit credential inheritance.
+- Proposed paid/recovery workflows use `contents: write` and `actions: read`, with
+  the account key scoped to controller steps. They await separate activation review.
+- No `pull_request_target`, paid push trigger or implicit credential inheritance.
 - `finally` and `always()` do not survive every cancellation/runner-loss case. This
   release makes no live cleanup promise and adds no scheduled account-wide reaper.
 
@@ -250,9 +255,10 @@ distinguish this authorization from execution: no paid Pod has been launched.
    See [current results and limits](docs/evidence/preflight-42334557432.md) and
    [the exact inputs and acceptance checks](docs/phase-2-plan.md).
 3. **GPU smoke preparation:** the real shared-state probe and public worker publication
-   succeeded. Complete paid controller integration, live worker admission/result export,
-   durable artifact receipts and independent lock handover before using the approved
-   USD 20/five-hour campaign. The allowance does not reset on retries.
+   succeeded. A fixed campaign controller now implements intent-before-create,
+   original-attempt handover, bounded export, upload-receipt verification and owned
+   cleanup, with injected fault tests. Review its two credential-bearing workflows
+   before live activation. The USD 20/five-hour allowance does not reset on retries.
 4. **Separate integration PR:** simplest smoke first; no business repository changes
    are included. Strict numerical checks and hardware groups follow later.
 

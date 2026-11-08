@@ -21,7 +21,7 @@ from pydantic import ValidationError
 
 from .lifecycle import owner
 from .models import Task
-from .provider import NoRedirect, ProviderError, http_error
+from .provider import NoRedirect, ProviderError, bounded_body, http_error
 from .storage import TaskJournal
 from .wire import Pod
 
@@ -45,11 +45,11 @@ class CleanupAPI:
         if timeout <= 0:
             raise ProviderError("cleanup_deadline")
         if not re.fullmatch(
-            r"/pods(?:/[a-z0-9]{1,64}|\?limit=100(?:&cursor=[A-Za-z0-9%._~-]+)?)", path
+            r"/pods(?:/[A-Za-z0-9_-]{1,100}|\?limit=100(?:&cursor=[A-Za-z0-9%._~-]+)?)", path
         ):
             raise ProviderError("cleanup_endpoint_invalid")
         if delete and (
-            not self.allow_termination or not re.fullmatch(r"/pods/[a-z0-9]{1,64}", path)
+            not self.allow_termination or not re.fullmatch(r"/pods/[A-Za-z0-9_-]{1,100}", path)
         ):
             raise ProviderError("termination_not_enabled")
         req = Request(
@@ -58,12 +58,13 @@ class CleanupAPI:
             headers={"Authorization": "Bearer " + str(self._key), "Accept": "application/json"},
         )
         try:
+            deadline = time.monotonic() + min(timeout, 5)
             with build_opener(NoRedirect).open(req, timeout=min(timeout, 5)) as response:
                 if delete:
                     if response.status != 204:
                         raise ProviderError("termination_response_unknown", ambiguous=True)
                     return None  # receipt alone never sets the deletion fact
-                raw = response.read(1_000_001)
+                raw = bounded_body(response, 1_000_000, deadline)
             if len(raw) > 1_000_000:
                 raise ProviderError("cleanup_response_too_large")
             value = json.loads(raw)
@@ -71,7 +72,7 @@ class CleanupAPI:
                 raise ProviderError("cleanup_response_invalid")
             return value
         except HTTPError as exc:
-            if exc.code == 404 and not delete and re.fullmatch(r"/pods/[a-z0-9]+", path):
+            if exc.code == 404 and not delete and re.fullmatch(r"/pods/[A-Za-z0-9_-]+", path):
                 return None
             raise http_error(exc.code) from None
         except (URLError, TimeoutError, OSError):
@@ -149,7 +150,7 @@ def cleanup_owned(
         pod_id = r.get("pod_id")
         r["facts"]["pod_deleted_confirmed"] = False
         r["state"], r["cleanup_verification"] = "CLEANUP_PENDING", "pending"
-        if not isinstance(pod_id, str) or not re.fullmatch(r"[a-z0-9]{1,64}", pod_id):
+        if not isinstance(pod_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", pod_id):
             r["cleanup_verification"] = "creation_unresolved"
             journal.write(r)
             return r
