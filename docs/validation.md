@@ -1,3 +1,12 @@
+# Manual activation evidence — 2026-11-07
+
+PR #7 was merged after explicit permission/publication approval. The real GitHub
+state probe and worker publication both succeeded at main
+`2e6fe6930c02fc2469079a1d8e64025562aff07f`. The package is public; anonymous registry
+verification and exact evidence boundaries are recorded in
+[activation evidence](evidence/activation-20261107.md).
+No RunPod Pod was created, stopped or deleted. Live execution remains disabled.
+
 # Worker and cleanup preparation — 2026-11-07
 
 220 offline tests pass (43 new since the shared-journal tranche), with strict mypy
@@ -6,9 +15,9 @@ ABI is injected in positive tests; no real GPU verification is claimed. New imag
 CI builds without credentials and must fail its GPU probe on the CPU runner.
 See [approved smoke and remaining activation gates](approved-smoke.md).
 
-The proposed state-write and image-publication workflows are manual-only and
-remain unapproved for activation. The USD 20/five-hour compute authorization does
-not authorize expanding GitHub permissions.
+The state-write and image-publication workflows remain manual-only. Their separate
+approval and completed integration checks are recorded above; the compute
+authorization alone did not authorize expanding GitHub permissions.
 
 # Current validation update — 2026-11-07
 

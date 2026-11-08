@@ -1,0 +1,55 @@
+{
+  "mode": "registry_read_only",
+  "observed_at": "2026-11-07T09:18:53.816528+00:00",
+  "image": "ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:d1a450f816d71169c29eb53217d869baa88d9eeaa156911f06b83b8a93f9ad11",
+  "source_sha": "2e6fe6930c02fc2469079a1d8e64025562aff07f",
+  "account_credentials_used": false,
+  "anonymous_pull_token": true,
+  "manifest_sha256_verified": true,
+  "all_layer_blobs_downloaded_and_verified": true,
+  "config_labels_verified": true,
+  "platform": "linux/amd64",
+  "blobs": [
+    {
+      "size": 8426,
+      "digest": "sha256:c33b78d790858abdea2dd3b85378892950974a48907d603fcc2bef908f7cf814"
+    },
+    {
+      "size": 29154799,
+      "digest": "sha256:0c318c19b4fc0854e25af60b251bb255e96031637d19b7c21f962d96de5ccea3"
+    },
+    {
+      "size": 3517403,
+      "digest": "sha256:2e8ff2a71e9573673dd17ca594722bd27eed7eb917debc0fb74ff9eb5d522ad1"
+    },
+    {
+      "size": 13667814,
+      "digest": "sha256:f9f25941dc135427be9d16894ce71a921adff16e2d43060139ed05c33fcd668e"
+    },
+    {
+      "size": 249,
+      "digest": "sha256:dbeb2af0e7bd53c2dff6896f9bde583874dc48fbb85d8cda0e9040dec5424ca8"
+    },
+    {
+      "size": 114,
+      "digest": "sha256:2661ce9e8c1020433084e571ee0d53ff4640ca753cace26758722dfac3e0cad2"
+    },
+    {
+      "size": 44163,
+      "digest": "sha256:1aaad130c9651e5393d4173d63fdfdf46ec6e4c73abcbb1658f0edd0add919e2"
+    },
+    {
+      "size": 32626,
+      "digest": "sha256:aa41a5d13a01beb7d9f1e6d4998f19770d23eb6e0efdd378731e14266bf3117c"
+    },
+    {
+      "size": 23968858,
+      "digest": "sha256:4eeac17d506879d6cedbb5af50020ced9b8b62b1e2dfd9930a5fb2cd68aac7d9"
+    }
+  ],
+  "total_blob_bytes": 70394452,
+  "docker_unpack_or_execution_verified_locally": false,
+  "runpod_image_pull_verified": false,
+  "gpu_verified": false,
+  "runpod_operations": 0
+}

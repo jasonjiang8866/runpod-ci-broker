@@ -175,8 +175,9 @@ events, attempts, candidate decisions, costs and cleanup evidence. Collection
 failure retries until its limit/deadline, then terminates compute while retaining
 diagnostics. It never holds a billable GPU indefinitely to save results.
 
-A shared conditional journal and bounded HTTPS result transport are now implemented
-and tested offline; their authenticated integrations remain **phase-3 gates**.
+A shared conditional journal and bounded HTTPS result transport are implemented
+and tested offline. The real GitHub journal conflict/release probe now passes;
+live RunPod result transport and controller recovery remain **phase-3 gates**.
 See [implementation and recovery drills](docs/durable-recovery.md). The result-only
 endpoint uses a per-task capability, byte/time limits and verified hashes. An
 independently accessible durable checkpoint location is still needed when required. The worker receives only an ephemeral result capability;
@@ -192,7 +193,10 @@ See [recovery and export contract](docs/recovery.md).
   with `RUNPOD_API_KEY` scoped to its GET-only command. It does not pass the key into
   a Pod, print raw environments or serialize provider error bodies. Use a read-only
   key with the required resource permissions when available.
-- No `pull_request_target`, image publication, paid workflow or implicit credential inheritance.
+- Image publication is a separately approved, manual main-only workflow with
+  `packages: write`. The manual state probe uses repository-wide `contents: write`.
+  Neither receives the RunPod key. See [activation evidence](docs/evidence/activation-20261107.md).
+- No `pull_request_target`, paid workflow or implicit credential inheritance.
 - `finally` and `always()` do not survive every cancellation/runner-loss case. This
   release makes no live cleanup promise and adds no scheduled account-wide reaper.
 
@@ -245,10 +249,10 @@ distinguish this authorization from execution: no paid Pod has been launched.
    12.8 returned capacity for all four allowed models. No paid execution.
    See [current results and limits](docs/evidence/preflight-42334557432.md) and
    [the exact inputs and acceptance checks](docs/phase-2-plan.md).
-3. **GPU smoke preparation:** shared journal, prepared GitHub Contents adapter and
-   bounded result-only HTTP export have offline tests. Complete authenticated
-   integration, live adapter, worker admission and independent lock handover before proposing a
-   concrete GPU, reviewed image, maximum duration and total cost. No standing authorization.
+3. **GPU smoke preparation:** the real shared-state probe and public worker publication
+   succeeded. Complete paid controller integration, live worker admission/result export,
+   durable artifact receipts and independent lock handover before using the approved
+   USD 20/five-hour campaign. The allowance does not reset on retries.
 4. **Separate integration PR:** simplest smoke first; no business repository changes
    are included. Strict numerical checks and hardware groups follow later.
 
