@@ -41,6 +41,24 @@ class Reader(Protocol):
     def open(self, path: str, timeout: float) -> AbstractContextManager[BinaryIO]: ...
 
 
+class ResultHTTPError(ProviderError):
+    """Fixed diagnostics only; a status does not identify the responding layer."""
+
+    def __init__(self, status: int, stage: str):
+        code = {
+            401: "result_authentication_failed",
+            403: "result_permission_denied",
+            404: "result_not_ready",
+        }.get(status, "result_http_failed")
+        super().__init__(code, retryable=status in {404, 429} or status >= 500)
+        self.diagnostic = {
+            "code": code,
+            "http_status": status,
+            "stage": stage,
+            "response_origin": "unverified",
+        }
+
+
 class RunPodResultReader:
     def __init__(self, pod_id: str, port: int, token: str):
         if not re.fullmatch(r"[a-z0-9]{1,64}", pod_id) or not 1 <= port <= 65535:
@@ -115,11 +133,13 @@ def collect_https(
         raise ValueError("result_symlink_refused")
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".collect-", dir=destination.parent))
+    stage = "manifest"
     try:
         manifest_buffer = io.BytesIO()
         read("/v1/manifest", manifest_buffer, MAX_MANIFEST)
         manifest = json.loads(manifest_buffer.getvalue())
         passed = validate_manifest(task, pod_id, manifest)
+        stage = "file"
         for name in task.results.required_files:
             target = staging / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -147,12 +167,8 @@ def collect_https(
             os.close(directory_fd)
         return passed
     except HTTPError as exc:
-        code = {
-            401: "result_authentication_failed",
-            403: "result_permission_denied",
-            404: "result_not_ready",
-        }.get(exc.code, "result_http_failed")
-        raise ProviderError(code, retryable=exc.code in {404, 429} or exc.code >= 500) from None
+        # Never retain raw URL, reason, body or headers; any may contain secrets.
+        raise ResultHTTPError(exc.code, stage) from None
     except (URLError, TimeoutError, OSError):
         raise ProviderError("result_transport_failed", retryable=True) from None
     except (ValueError, KeyError, TypeError):
