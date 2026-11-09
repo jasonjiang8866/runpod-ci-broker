@@ -22,6 +22,23 @@ API = "https://api.runpod.io/v2"
 OWNER_KEYS = ("RCB_TOOL", "RCB_SCOPE", "RCB_EXPERIMENT", "RCB_CONFIG", "RCB_RUN", "RCB_SOURCE")
 
 
+def bounded_body(response: Any, limit: int, deadline: float) -> bytes:
+    """Bound streamed API bodies as well as socket idle time; never retain URLs."""
+    body = bytearray()
+    read = getattr(response, "read1", response.read)
+    while True:
+        if time.monotonic() >= deadline:
+            raise TimeoutError()
+        block = read(min(65536, limit + 1 - len(body)))
+        if time.monotonic() >= deadline:
+            raise TimeoutError()
+        if not block:
+            return bytes(body)
+        body.extend(block)
+        if len(body) > limit:
+            raise ValueError("provider_body_too_large")
+
+
 class ProviderError(Exception):
     def __init__(self, code: str, *, retryable: bool = False, ambiguous: bool = False):
         super().__init__(code)

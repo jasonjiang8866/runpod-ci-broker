@@ -17,7 +17,13 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
     lines = [
         "# RunPod CI Broker report",
         "",
-        f"Evidence mode: **{record['mode']}**. Real GPU execution: **not verified**.",
+        f"Evidence mode: **{record['mode']}**. Real GPU execution: **"
+        + (
+            "verified"
+            if record["mode"] == "live" and record.get("gpu_verified")
+            else "not verified"
+        )
+        + "**.",
         "",
         f"State: `{record.get('state', 'PLANNED')}`",
         "",
@@ -89,7 +95,7 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
             json.dumps(record["provider_observations"], indent=2),
             "```",
             "",
-            "Capacity signals are not reservations; image pull and runtime GPU checks remain unverified.",
+            "Preflight signals are not reservations or runtime GPU verification; see the separate execution facts.",
         ]
     lines += [
         "",
@@ -100,6 +106,11 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
         "```",
         "",
         "Costs are estimates. Supplier invoice is unavailable; no provider hard cap is claimed.",
+        "",
+        "Campaign accounting (estimates, never an invoice):",
+        "```json",
+        json.dumps(record.get("campaign"), indent=2),
+        "```",
         "",
         "## Recovery",
         "",

@@ -1,3 +1,12 @@
+# Fixed controller preparation — 2026-11-09
+
+267 offline tests pass, including 47 new controller/campaign/handover cases.
+Strict mypy passes for 22 modules; Ruff and wheel/sdist build pass. Tests inject
+provider and GitHub responses: no paid creation, real GPU, proxy export, live
+handover or actual deletion is claimed. See the [reviewable activation plan](live-controller.md).
+The generic CLI remains dry-run by default. The two new credential-bearing
+workflows are prepared for permission/activation review, not dispatched.
+
 # Manual activation evidence — 2026-11-07
 
 PR #7 was merged after explicit permission/publication approval. The real GitHub

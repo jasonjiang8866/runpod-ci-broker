@@ -84,14 +84,16 @@ image pull. Never inject a GitHub management token into a Pod.
 ## First attempt and remaining implementation
 
 Use a short memory smoke, not five hours of work. Initial target: runtime <=60s,
-startup <=300s, collection <=120s, cleanup <=120s, and at most two startup attempts
+startup <=300s, collection/upload <=120s, cleanup <=120s, and one creation request
 inside the single campaign allowance. This bounds the *planned* first smoke to
-20 aggregate minutes, or at most USD 1 compute at the approved ceiling. It is not a
+10 aggregate minutes, or at most USD 0.50 compute at the approved ceiling. It is not a
 current quote or a hard spend guarantee. Use fresh storage/transfer estimates and
 capacity/price observations before launch; retain most of the USD 20 as unused
 headroom rather than automatically spending it.
 
-Before creation, finish and verify:
+The [fixed controller implementation and activation review](live-controller.md)
+now cover items 2–4 below with offline fault tests. They still need live validation;
+new workflow permissions and activation must be reviewed before creation:
 
 1. Retain the completed state-probe and public immutable image evidence. These
    preparation checks needed no RunPod compute.
