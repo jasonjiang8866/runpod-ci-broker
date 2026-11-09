@@ -12,11 +12,13 @@ import yaml
 
 from runpod_ci_broker.campaign import CAMPAIGN, SCOPE, may_collect, observe, reserve, validate_task
 from runpod_ci_broker.controller import Controller
+from runpod_ci_broker.export import ResultHTTPError
 from runpod_ci_broker.handover import ControllerJournal, GitHubEvidence, context
 from runpod_ci_broker.ledger import LedgerError, SQLiteStore
 from runpod_ci_broker.live import LiveAPI
 from runpod_ci_broker.models import Candidate, Task
 from runpod_ci_broker.provider import ProviderError
+from runpod_ci_broker.report import write_report
 from runpod_ci_broker.results import save_bundle
 
 IDENTITY = {
@@ -26,6 +28,38 @@ IDENTITY = {
     "path": ".github/workflows/gpu-smoke.yml",
     "event": "workflow_dispatch",
 }
+
+
+def test_result_403_preserves_diagnostics_without_retry_or_second_create(
+    setup, monkeypatch, tmp_path
+):
+    controller, cloud, journal = setup
+    started = controller.start(confirmed=True)
+    assert "No GPU was executed" not in started["notice"]
+
+    def denied(*args, **kwargs):
+        raise ResultHTTPError(403, "manifest")
+
+    monkeypatch.setattr("runpod_ci_broker.controller.collect_https", denied)
+    result = controller.collect()
+    assert result["state"] == "REJECTED"
+    assert result["facts"]["pod_deleted_confirmed"]
+    assert not result["facts"]["results_saved"]
+    assert result["collect_attempts"] == 1
+    assert result["result_http_failures"] == [
+        {
+            "code": "result_permission_denied",
+            "http_status": 403,
+            "stage": "manifest",
+            "response_origin": "unverified",
+        }
+    ]
+    controller.start(confirmed=True)
+    assert cloud.creates == 1
+    write_report(journal.read(), tmp_path / "report")
+    summary = (tmp_path / "report" / "summary.md").read_text()
+    assert "result_permission_denied" in summary and '"http_status": 403' in summary
+    assert "not verified" in summary
 
 
 class FakeCloud:

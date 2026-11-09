@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from .campaign import CAMPAIGN, REPOSITORY, SCOPE, may_collect, observe, reserve, validate_task
 from .cleanup import CleanupClient, cleanup_owned
-from .export import RunPodResultReader, capability_valid, collect_https
+from .export import ResultHTTPError, RunPodResultReader, capability_valid, collect_https
 from .handover import ControllerJournal, GitHubEvidence, context
 from .ledger import GitHubContentsStore, LedgerError
 from .lifecycle import owner
@@ -145,6 +145,10 @@ class Controller:
                 raise ProviderError("scope_has_unresolved_intent")
             candidates, inventory = self.snapshot(self.task)
             r.update(plan(self.task, candidates, mode="live"))
+            r["notice"] = (
+                "Live controller: Pod allocation, GPU verification, saved results and deletion "
+                "are separate facts. Catalog capacity is not a reservation."
+            )
             r["provider_observations"] = inventory  # sanitized ReadOnlyRunPod projection
             if (
                 inventory.get("query_status") != "ok"
@@ -315,6 +319,8 @@ class Controller:
                     break
                 except ProviderError as exc:
                     r["errors"].append(exc.code)
+                    if isinstance(exc, ResultHTTPError):
+                        r.setdefault("result_http_failures", []).append(exc.diagnostic)
                     self.save(r, "COLLECTION_FAILED")
                     if not exc.retryable:
                         break
