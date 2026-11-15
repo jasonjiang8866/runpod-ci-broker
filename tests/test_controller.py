@@ -96,10 +96,75 @@ def test_result_403_preserves_diagnostics_without_retry_or_second_create(
     ]
     controller.start(confirmed=True)
     assert cloud.creates == 1
+    assert cloud.log_calls == [("abc123", 3)]
+    assert result["startup_logs"]["signals"] == ["worker_refusal_hint"]
     write_report(journal.read(), tmp_path / "report")
     summary = (tmp_path / "report" / "summary.md").read_text()
     assert "result_permission_denied" in summary and '"http_status": 403' in summary
     assert "not verified" in summary
+
+
+@pytest.mark.parametrize("diagnostic_failure", [True, False])
+def test_failed_startup_diagnostic_cannot_block_cleanup(setup, monkeypatch, diagnostic_failure):
+    controller, cloud, _ = setup
+    controller.start(confirmed=True)
+
+    def denied(*args, **kwargs):
+        raise ResultHTTPError(403, "manifest")
+
+    def logs(*args):
+        cloud.log_calls.append(args)
+        if diagnostic_failure:
+            raise ProviderError("SECRET")
+        return {"status": "http_error", "http_status": 403, "root_cause": "unverified"}
+
+    cloud.startup_logs = logs
+    monkeypatch.setattr("runpod_ci_broker.controller.collect_https", denied)
+    result = controller.collect()
+    assert result["facts"]["pod_deleted_confirmed"] and cloud.deletes == ["abc123"]
+    assert result["collect_attempts"] == 1 and len(cloud.log_calls) == 1
+    assert "SECRET" not in json.dumps(result)
+
+
+def test_diagnostics_skip_near_deadline_and_preserve_original_budget(setup, monkeypatch):
+    controller, cloud, journal = setup
+    started = controller.start(confirmed=True)
+    original_campaign = copy.deepcopy(started["campaign"])
+    cloud.clock = original_campaign["collection_deadline"] - 2
+    monkeypatch.setattr(
+        "runpod_ci_broker.controller.collect_https",
+        lambda *a, **kw: (_ for _ in ()).throw(ResultHTTPError(403, "manifest")),
+    )
+    result = controller.collect()
+    assert result["startup_logs"]["status"] == "skipped_deadline"
+    assert not cloud.log_calls and result["facts"]["pod_deleted_confirmed"]
+    assert result["campaign"]["wall_deadline"] == original_campaign["wall_deadline"]
+    assert result["campaign"]["reserved_usd"] == original_campaign["reserved_usd"]
+    assert journal.read()["attempts"] == 1
+
+
+def test_diagnostic_intent_survives_lost_runner_without_second_read(setup, monkeypatch):
+    controller, cloud, journal = setup
+    controller.start(confirmed=True)
+    r = journal.read()
+    r["startup_logs"] = {"status": "attempted_unconfirmed", "root_cause": "unverified"}
+    with journal.lock():
+        journal.write(r)
+    monkeypatch.setattr(
+        "runpod_ci_broker.controller.collect_https",
+        lambda *a, **kw: (_ for _ in ()).throw(ResultHTTPError(403, "manifest")),
+    )
+    result = controller.collect()
+    assert not cloud.log_calls and result["facts"]["pod_deleted_confirmed"]
+
+
+def test_foreign_pod_never_reads_startup_logs(setup, monkeypatch):
+    controller, cloud, _ = setup
+    controller.start(confirmed=True)
+    cloud.pod["env"] = {}
+    result = controller.collect()
+    assert not cloud.log_calls and not cloud.deletes
+    assert result["cleanup_verification"] != "direct_404_and_complete_inventory_twice"
 
 
 class FakeCloud:
@@ -109,6 +174,11 @@ class FakeCloud:
         self.deletes = []
         self.lost = False
         self.clock = 1000.0
+        self.log_calls = []
+
+    def startup_logs(self, pod_id, timeout):
+        self.log_calls.append((pod_id, timeout))
+        return {"status": "eof", "signals": ["worker_refusal_hint"], "root_cause": "unverified"}
 
     def now(self):
         return self.clock
