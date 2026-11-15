@@ -4,11 +4,13 @@ A small Python CLI for **bounded, explainable RunPod GPU experiments driven by
 GitHub Actions**. It separates experiment requirements from cloud placement,
 budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 
-**Current release: no-cost MVP.** Offline planning, a persistent fault-injection
-simulator, and a REST v2 **GET-only** preflight adapter are implemented.
-The worker/export and ownership-checked cleanup libraries are prepared. A separate
-[fixed-campaign controller and recovery workflow](docs/live-controller.md) now have
-offline fault tests and await activation review; no real GPU execution is claimed.
+**Current status: live lifecycle partially verified.** The first real RTX 3090
+allocation and ownership-checked deletion passed, but HTTP 403 blocked result
+collection: CUDA and worker output remain unverified. See the
+[live evidence](docs/evidence/smoke-42596594291.md) and
+[bounded diagnosis / next-attempt plan](docs/startup-diagnostics.md).
+Offline planning, simulation and GET-only preflight remain available. The separate
+[fixed-campaign controller](docs/live-controller.md) retains its one-attempt guard.
 Generic Pod creation and cleanup remain disabled in the default CLI.
 `--action run` refuses even a populated authorization record. Passing mock tests
 is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).

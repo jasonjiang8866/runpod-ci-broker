@@ -26,12 +26,14 @@ from .planner import plan
 from .provider import ProviderError, ReadOnlyRunPod
 from .report import write_report
 from .results import validate_manifest, verify_saved
+from .transport_diagnostics import proxy_environment, record_startup
 from .worker import Observation, admit
 
 
 class LiveClient(CleanupClient, Protocol):
     def inventory(self) -> list[dict[str, Any]]: ...
     def create(self, body: dict[str, Any]) -> str: ...
+    def startup_logs(self, pod_id: str, timeout: float) -> dict[str, Any]: ...
 
 
 class Controller:
@@ -239,6 +241,27 @@ class Controller:
         ).hexdigest()
         self.save(r, "COLLECTED")
 
+    def diagnose_startup(self, r: dict[str, Any]) -> None:
+        # At most once across resumes, within the existing collection deadline.
+        # Failure to diagnose never prevents the caller from entering cleanup.
+        if "startup_logs" in r:
+            return
+        left = (
+            min(r["campaign"]["collection_deadline"], r["campaign"]["wall_deadline"]) - self.now()
+        )
+        r["startup_logs"] = {"status": "skipped_deadline", "root_cause": "unverified"}
+        if left < 4:
+            self.save(r)
+            return
+        r["startup_logs"]["status"] = "attempted_unconfirmed"
+        self.save(r)  # lost response must not enable another log request
+        try:
+            # adopt() has already verified this Pod in the current collection iteration.
+            r["startup_logs"] = self.api.startup_logs(r["pod_id"], 3)
+        except (ProviderError, ValueError, OSError, TypeError):
+            r["startup_logs"] = {"status": "diagnostic_unavailable", "root_cause": "unverified"}
+        self.save(r)
+
     def collect(self) -> dict[str, Any]:
         try:
             r = self._collect()
@@ -272,6 +295,8 @@ class Controller:
                     if p is None:
                         break  # unknown create stays unresolved, never retry POST
                     status = p.get("status")
+                    record_startup(r, p, self.now())
+                    self.save(r)
                     rate = p.get("cost")
                     if (
                         isinstance(rate, bool)
@@ -286,6 +311,7 @@ class Controller:
                         break
                     if status in {"ERROR", "EXITED", "TERMINATED"}:
                         self.save(r, "RUN_FAILED")
+                        self.diagnose_startup(r)
                         break
                     if status != "RUNNING":
                         if self.now() >= r["campaign"]["first_intent_at"] + 300:
@@ -306,6 +332,7 @@ class Controller:
                         self.save(r, "COLLECTION_FAILED")
                         break
                     r["collect_attempts"] += 1
+                    r["collector_proxy_environment"] = proxy_environment(os.environ)
                     self.save(r, "COLLECTING")
                     left = r["campaign"]["collection_deadline"] - self.now()
                     collect_https(
@@ -323,6 +350,8 @@ class Controller:
                         r.setdefault("result_http_failures", []).append(exc.diagnostic)
                     self.save(r, "COLLECTION_FAILED")
                     if not exc.retryable:
+                        if isinstance(exc, ResultHTTPError):
+                            self.diagnose_startup(r)
                         break
                     self.sleep(min(10, max(0, r["campaign"]["collection_deadline"] - self.now())))
             return r

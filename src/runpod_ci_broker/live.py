@@ -12,6 +12,7 @@ from urllib.request import Request, build_opener
 
 from .cleanup import CleanupAPI
 from .provider import NoRedirect, ProviderError, bounded_body, http_error
+from .startup import summarize_logs
 from .wire import Pod
 
 
@@ -19,6 +20,41 @@ class LiveAPI(CleanupAPI):
     def __init__(self, *, allow_create: bool = False, allow_termination: bool = False):
         super().__init__(allow_termination=allow_termination)
         self.allow_create = allow_create
+
+    def startup_logs(self, pod_id: str, timeout: float) -> dict[str, Any]:
+        """One read-only SSE snapshot, <=64 KiB and <=3s plus a <=1s socket wait.
+
+        The caller must verify ownership first. Never reconnect, emit raw log text,
+        follow redirects or send the management key to a workload proxy.
+        """
+        if not re.fullmatch(r"[a-z0-9]{1,64}", pod_id) or not 0 < timeout <= 3:
+            raise ValueError("startup_diagnostic_bounds")
+        req = Request(
+            f"https://api.runpod.io/v2/pods/{pod_id}/logs?tail=100",
+            headers={"Authorization": "Bearer " + str(self._key), "Accept": "text/event-stream"},
+        )
+        deadline = time.monotonic() + timeout
+        raw = bytearray()
+        stop = "eof"
+        status: int | None = None
+        try:
+            with build_opener(NoRedirect).open(req, timeout=min(1, timeout)) as response:
+                if response.status != 200:
+                    return {"status": "unexpected_status", "root_cause": "unverified"}
+                read = getattr(response, "read1", response.read)
+                while time.monotonic() < deadline and len(raw) < 65_536:
+                    block = read(min(4096, 65_536 - len(raw)))
+                    if not block:
+                        break
+                    raw.extend(block)
+                else:
+                    stop = "byte_limit" if len(raw) >= 65_536 else "deadline"
+        except HTTPError as exc:
+            status, stop = exc.code, "http_error"
+            exc.close()
+        except (TimeoutError, URLError, OSError):
+            stop = "timeout_or_transport"
+        return {"status": stop, "http_status": status, **summarize_logs(bytes(raw))}
 
     def inventory(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
