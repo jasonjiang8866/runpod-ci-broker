@@ -26,6 +26,7 @@ from .planner import plan
 from .provider import ProviderError, ReadOnlyRunPod
 from .report import write_report
 from .results import validate_manifest, verify_saved
+from .transport_diagnostics import proxy_environment, record_startup
 from .worker import Observation, admit
 
 
@@ -272,6 +273,8 @@ class Controller:
                     if p is None:
                         break  # unknown create stays unresolved, never retry POST
                     status = p.get("status")
+                    record_startup(r, p, self.now())
+                    self.save(r)
                     rate = p.get("cost")
                     if (
                         isinstance(rate, bool)
@@ -306,6 +309,7 @@ class Controller:
                         self.save(r, "COLLECTION_FAILED")
                         break
                     r["collect_attempts"] += 1
+                    r["collector_proxy_environment"] = proxy_environment(os.environ)
                     self.save(r, "COLLECTING")
                     left = r["campaign"]["collection_deadline"] - self.now()
                     collect_https(

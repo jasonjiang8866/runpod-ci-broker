@@ -28,6 +28,7 @@ from .models import Task
 from .provider import NoRedirect, ProviderError
 from .results import validate_manifest, verify_saved
 from .storage import atomic_json
+from .transport_diagnostics import header_hints
 
 MAX_MANIFEST = 65_536
 MAX_EXPORT = 64 * 1024 * 1024  # Small-experiment MVP, no unbounded bundle in RAM.
@@ -51,7 +52,7 @@ class ResultHTTPError(ProviderError):
             404: "result_not_ready",
         }.get(status, "result_http_failed")
         super().__init__(code, retryable=status in {404, 429} or status >= 500)
-        self.diagnostic = {
+        self.diagnostic: dict[str, Any] = {
             "code": code,
             "http_status": status,
             "stage": stage,
@@ -167,8 +168,14 @@ def collect_https(
             os.close(directory_fd)
         return passed
     except HTTPError as exc:
-        # Never retain raw URL, reason, body or headers; any may contain secrets.
-        raise ResultHTTPError(exc.code, stage) from None
+        # Never read the body or copy raw URL/reason/header values. Close the
+        # response without draining it, so diagnosis cannot delay cleanup.
+        failure = ResultHTTPError(exc.code, stage)
+        try:
+            failure.diagnostic["header_hints"] = header_hints(exc.headers)
+        finally:
+            exc.close()
+        raise failure from None
     except (URLError, TimeoutError, OSError):
         raise ProviderError("result_transport_failed", retryable=True) from None
     except (ValueError, KeyError, TypeError):
