@@ -722,3 +722,181 @@ def test_oversized_create_body_response_keeps_unknown_intent(monkeypatch):
     with pytest.raises(ProviderError) as error:
         LiveAPI(allow_create=True).create({})
     assert error.value.ambiguous
+
+
+@pytest.fixture
+def retry_setup(setup, monkeypatch):
+    from runpod_ci_broker.campaign import DIAGNOSTIC_RETRY
+
+    c, cloud, journal = setup
+    c.start(confirmed=True)
+    monkeypatch.setattr(
+        "runpod_ci_broker.controller.collect_https",
+        lambda *a, **kw: (_ for _ in ()).throw(ResultHTTPError(403, "manifest")),
+    )
+    c.collect()
+    previous = journal.read()
+    cloud.clock = previous["campaign"]["wall_deadline"] + 86400
+    identity = {**IDENTITY, "run_id": "5678"}
+    successor = ControllerJournal(journal.store, SCOPE, DIAGNOSTIC_RETRY, identity, lambda _: True)
+    task = Task.model_validate_json(Path("examples/diagnostic-retry-smoke.json").read_text())
+    retry = Controller(
+        task, successor, cloud, c.snapshot, c.output, now=cloud.now, sleep=cloud.sleep
+    )
+    return retry, cloud, journal, previous
+
+
+def test_diagnostic_retry_preserves_parent_budget_and_stops_after_second_denial(retry_setup):
+    retry, cloud, original, previous = retry_setup
+    result = retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 2
+    assert result["selected"]["gpu_id"] == "NVIDIA GeForce RTX 4090"
+    assert result["name"] != previous["name"]
+    assert result["campaign"]["id"] == CAMPAIGN
+    assert result["campaign"]["reserved_usd"] == 2.000334
+    assert result["campaign"]["reserved_seconds"] == 1200
+    assert result["campaign"]["predecessor"]["reserved_usd"] == 1.000167
+    assert (
+        result["campaign"]["predecessor"]["record_sha256"]
+        == hashlib.sha256(
+            json.dumps(previous, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest()
+    )
+    cloud.clock += 10
+    rejected = retry.collect()
+    assert rejected["facts"]["pod_deleted_confirmed"]
+    assert rejected["state"] == "REJECTED"
+    assert rejected["collect_attempts"] == 1
+    assert rejected["campaign"]["estimated_elapsed_cost_usd"] >= 1.500167
+    assert rejected["campaign"]["aggregate_resource_seconds"] >= (
+        previous["campaign"]["aggregate_resource_seconds"] + 10
+    )
+    assert original.read() == previous
+    retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 2  # a later window never grants a third attempt
+    assert original.read() == previous
+
+
+@pytest.mark.parametrize("window", [None, -1, 0, 599, 3601, float("nan"), float("inf")])
+def test_retry_requires_explicit_bounded_window(retry_setup, window):
+    retry, cloud, original, previous = retry_setup
+    end = None if window is None else cloud.clock + window
+    with pytest.raises(ValueError, match="explicit_retry_execution_window_required"):
+        retry.start(confirmed=True, window_end=end)
+    assert cloud.creates == 1 and retry.j.read() is None
+    assert original.read() == previous
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("reserved_usd", 1.1),
+        ("reserved_seconds", 601),
+        ("aggregate_resource_seconds", 601),
+        ("estimated_elapsed_cost_usd", 1.1),
+    ],
+)
+def test_retry_refuses_changed_accounting(retry_setup, field, value):
+    retry, cloud, original, previous = retry_setup
+    previous["campaign"][field] = value
+    with original.lock():
+        original.write(previous)
+    with pytest.raises(ValueError, match="retry_parent_not_eligible"):
+        retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 1 and retry.j.read() is None
+
+
+@pytest.mark.parametrize("which", ["absent", "unresolved", "accepted", "no_completion", "recovery"])
+def test_retry_rejects_unverified_predecessor_or_recovery(retry_setup, which):
+    retry, cloud, original, previous = retry_setup
+    if which == "absent":
+        with original.lock():
+            version, document = original.owned()
+            del document["records"][CAMPAIGN]
+            original.checkpoint(version, document)
+    elif which == "no_completion":
+        retry.j.completed = lambda _: False
+    elif which == "recovery":
+        retry.j.recovery = True
+    else:
+        if which == "unresolved":
+            previous["facts"]["pod_deleted_confirmed"] = False
+        else:
+            previous["state"] = "ACCEPTED"
+        with original.lock():
+            original.write(previous)
+    with pytest.raises(ValueError):
+        retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 1 and retry.j.read() is None
+
+
+def test_retry_lost_create_response_is_recovered_without_new_allowance(retry_setup):
+    retry, cloud, original, previous = retry_setup
+    cloud.lost = True
+    result = retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert result["state"] == "CREATE_UNKNOWN"
+    retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 2
+    result = retry.collect()
+    assert result["facts"]["pod_deleted_confirmed"]
+    assert result["campaign"]["reserved_usd"] == 2.000334
+    assert original.read() == previous
+
+
+def test_retry_does_not_create_without_paid_confirmation(retry_setup):
+    retry, cloud, _, _ = retry_setup
+    with pytest.raises(ValueError, match="explicit_paid_confirmation_required"):
+        retry.start(window_end=cloud.clock + 3600)
+    assert cloud.creates == 1 and retry.j.read() is None
+
+
+def test_recovery_cli_follows_successor_without_creating(retry_setup, monkeypatch):
+    import runpod_ci_broker.controller as module
+
+    retry, cloud, original, previous = retry_setup
+    retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    real_controller = Controller
+    monkeypatch.setattr(
+        module,
+        "context",
+        lambda: {
+            **IDENTITY,
+            "run_id": "9012",
+            "path": ".github/workflows/recover-smoke.yml",
+            "event": "workflow_run",
+        },
+    )
+    monkeypatch.setattr(module, "GitHubContentsStore", lambda _: original.store)
+    monkeypatch.setattr(module, "LiveAPI", lambda **kw: cloud)
+    monkeypatch.setattr(module, "ReadOnlyRunPod", lambda: retry)
+    monkeypatch.setattr(
+        module,
+        "Controller",
+        lambda task, journal, api, snapshot, output: real_controller(
+            task, journal, api, snapshot, retry.output, now=cloud.now, sleep=cloud.sleep
+        ),
+    )
+    monkeypatch.setattr("sys.argv", ["controller", "collect"])
+    assert module.main() == 2  # diagnostic 403 remains rejected; cleanup still completes
+    assert cloud.creates == 2
+    assert retry.j.read()["facts"]["pod_deleted_confirmed"]
+    assert original.read() == previous
+
+
+def test_retry_reserves_before_ambiguous_ledger_failure_without_post(retry_setup, monkeypatch):
+    retry, cloud, original, previous = retry_setup
+    save = retry.save
+
+    def fail_after_intent(record, state=None):
+        save(record, state)
+        if state == "CREATING":
+            raise LedgerError("ledger_write_unknown")
+
+    monkeypatch.setattr(retry, "save", fail_after_intent)
+    with pytest.raises(LedgerError):
+        retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 1
+    assert retry.j.read()["campaign"]["reserved_usd"] == 2.000334
+    retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 1  # an uncertain checkpoint cannot cause a later POST
+    assert original.read() == previous

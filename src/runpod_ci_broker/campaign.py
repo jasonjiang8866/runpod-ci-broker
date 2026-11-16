@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from typing import Any
 
@@ -11,6 +13,8 @@ from .worker import CONSUMER, MIG
 
 REPOSITORY = "jasonjiang8866/runpod-ci-broker"
 CAMPAIGN = "broker-smoke-20261107"
+DIAGNOSTIC_RETRY = CAMPAIGN + "-diagnostic-2"
+PRIOR_RESERVATION = 1.000167
 SCOPE = "broker-central-smoke"
 SOURCE = "2e6fe6930c02fc2469079a1d8e64025562aff07f"
 IMAGE = (
@@ -22,7 +26,7 @@ IMAGE = (
 def validate_task(task: Task) -> dict[str, Any]:
     b = estimate(task)
     if (
-        task.experiment_id != CAMPAIGN
+        task.experiment_id not in {CAMPAIGN, DIAGNOSTIC_RETRY}
         or task.scope != SCOPE
         or task.repository != REPOSITORY
         or task.source_sha != SOURCE
@@ -53,7 +57,8 @@ def validate_task(task: Task) -> dict[str, Any]:
         or task.limits.max_wait_seconds > 60
         or task.limits.max_queries > 4
         or task.limits.max_collect_attempts > 10
-        or task.limits.prior_spend_usd != 0
+        or task.limits.prior_spend_usd
+        != (PRIOR_RESERVATION if task.experiment_id == DIAGNOSTIC_RETRY else 0)
         or task.results.required_files != ["metrics.json", "worker.log", "environment.json"]
         or task.results.metric_min != {"gpu_memory_smoke_passed": 1.0}
         or task.results.metric_max != {"worker_exit_code": 0.0}
@@ -64,25 +69,79 @@ def validate_task(task: Task) -> dict[str, Any]:
     return b
 
 
-def reserve(record: dict[str, Any], task: Task, now: float) -> None:
+def retry_parent(prior: dict[str, Any] | None, task: Task) -> dict[str, Any]:
+    """One known predecessor, never a reset or an arbitrary new allowance."""
+    if prior is None:
+        raise ValueError("retry_requires_original_record")
+    original = Task.model_validate(prior["request"])
+    validate_task(original)
+    c = prior["campaign"]
+    if (
+        original.experiment_id != CAMPAIGN
+        or prior["config_fingerprint"] != original.fingerprint()
+        or prior["mode"] != "live"
+        or prior["attempts"] != 1
+        or prior["state"] != "REJECTED"
+        or prior["facts"]["pod_deleted_confirmed"] is not True
+        or prior["facts"]["task_completed"] is not True
+        or prior["cleanup_verification"] != "direct_404_and_complete_inventory_twice"
+        or c["reserved_usd"] != PRIOR_RESERVATION
+        or c["reserved_seconds"] != 600
+        or not 0 <= c["aggregate_resource_seconds"] <= 600
+        or not 0 <= c["estimated_elapsed_cost_usd"] <= PRIOR_RESERVATION
+        or task.limits.prior_spend_usd != PRIOR_RESERVATION
+    ):
+        raise ValueError("retry_parent_not_eligible")
+    return {
+        "experiment_id": CAMPAIGN,
+        "record_sha256": hashlib.sha256(
+            json.dumps(prior, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest(),
+        "reserved_usd": c["reserved_usd"],
+        "reserved_seconds": c["reserved_seconds"],
+        "aggregate_resource_seconds": c["aggregate_resource_seconds"],
+        "original_wall_deadline": c["wall_deadline"],
+    }
+
+
+def reserve(
+    record: dict[str, Any],
+    task: Task,
+    now: float,
+    *,
+    prior: dict[str, Any] | None = None,
+    window_end: float | None = None,
+) -> None:
     b = validate_task(task)
     if record.get("campaign") is not None or record.get("attempts", 0) != 0:
         raise ValueError("campaign_already_attempted")
+    parent = None
+    if task.experiment_id == DIAGNOSTIC_RETRY:
+        parent = retry_parent(prior, task)
+        if (
+            window_end is None
+            or not math.isfinite(window_end)
+            or not now + 600 <= window_end <= now + 3600
+        ):
+            raise ValueError("explicit_retry_execution_window_required")
     # Reserve the entire attempt BEFORE POST. Never refund unknown create results.
     record["campaign"] = {
         "id": CAMPAIGN,
         "first_intent_at": now,
         "last_observed_at": now,
-        "wall_deadline": now + 18000,
+        "wall_deadline": window_end if parent else now + 18000,
         "attempt_deadline": now + 600,
         "collection_deadline": now + 420,  # leaves 60s upload + 120s cleanup
         "reserved_usd": b["estimated_total_usd"],
-        "reserved_seconds": 600,
-        "aggregate_resource_seconds": 0.0,
-        "estimated_elapsed_cost_usd": 0.0,
+        "reserved_seconds": 1200 if parent else 600,
+        "aggregate_resource_seconds": parent["aggregate_resource_seconds"] if parent else 0.0,
+        "estimated_elapsed_cost_usd": PRIOR_RESERVATION if parent else 0.0,
         "observed_max_hourly_compute_usd": None,
         "supplier_bill_usd": None,
     }
+    if parent:
+        record["campaign"]["attempt_number"] = 2
+        record["campaign"]["predecessor"] = parent
     record["attempts"] = 1
 
 
@@ -97,7 +156,10 @@ def observe(record: dict[str, Any], task: Task, now: float, rate: float | None =
         c["observed_max_hourly_compute_usd"] = max(c["observed_max_hourly_compute_usd"] or 0, rate)
     until = record.get("deleted_confirmed_at", now)
     elapsed = max(0.0, until - c["first_intent_at"])
-    c["aggregate_resource_seconds"] = max(c["aggregate_resource_seconds"], elapsed)
+    previous_seconds = c.get("predecessor", {}).get("aggregate_resource_seconds", 0.0)
+    c["aggregate_resource_seconds"] = max(
+        c["aggregate_resource_seconds"], previous_seconds + elapsed
+    )
     # Conservative estimate includes all unresolved lifetime, including stopped periods.
     # It is neither metered usage nor an invoice. Never replaces the original reserve.
     hourly = max(3.0, c["observed_max_hourly_compute_usd"] or 0)

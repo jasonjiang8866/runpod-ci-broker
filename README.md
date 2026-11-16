@@ -11,6 +11,9 @@ collection: CUDA and worker output remain unverified. See the
 [bounded diagnosis / next-attempt plan](docs/startup-diagnostics.md).
 Offline planning, simulation and GET-only preflight remain available. The separate
 [fixed-campaign controller](docs/live-controller.md) retains its one-attempt guard.
+A [single diagnostic successor](docs/diagnostic-retry.md) is prepared behind an
+explicit execution-window input; it carries forward the original reservation and
+does not enable a third attempt. Its real execution is still pending approval.
 Generic Pod creation and cleanup remain disabled in the default CLI.
 `--action run` refuses even a populated authorization record. Passing mock tests
 is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).
