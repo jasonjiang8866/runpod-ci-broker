@@ -16,6 +16,8 @@ CAMPAIGN = "broker-smoke-20261107"
 DIAGNOSTIC_RETRY = CAMPAIGN + "-diagnostic-2"
 TRANSPORT_RETEST = CAMPAIGN + "-transport-3"
 REPAIR = CAMPAIGN + "-repair-4"
+CAPACITY_FALLBACK = CAMPAIGN + "-repair-5"
+REPAIR_RECORD_HASH = "a27554e3184631ae5ed4678077561785e3d35fca8a7bfea2cd54c83b2f0b2b46"
 REPAIR_SOURCE = "567edcc32529ad017d13edbc154971aea4d9d624"
 REPAIR_IMAGE = (
     "ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:"
@@ -39,11 +41,14 @@ IMAGE = (
 def validate_task(task: Task) -> dict[str, Any]:
     b = estimate(task)
     if (
-        task.experiment_id not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR}
+        task.experiment_id
+        not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR, CAPACITY_FALLBACK}
         or task.scope != SCOPE
         or task.repository != REPOSITORY
-        or task.source_sha != (REPAIR_SOURCE if task.experiment_id == REPAIR else SOURCE)
-        or task.image != (REPAIR_IMAGE if task.experiment_id == REPAIR else IMAGE)
+        or task.source_sha
+        != (REPAIR_SOURCE if task.experiment_id in {REPAIR, CAPACITY_FALLBACK} else SOURCE)
+        or task.image
+        != (REPAIR_IMAGE if task.experiment_id in {REPAIR, CAPACITY_FALLBACK} else IMAGE)
         or task.strategy != "flexible_smoke"
         or task.entrypoint != ["broker-cuda-memory-smoke"]
         or set(task.gpu_allowlist) != CONSUMER | {MIG}
@@ -76,6 +81,7 @@ def validate_task(task: Task) -> dict[str, Any]:
             DIAGNOSTIC_RETRY: PRIOR_RESERVATION,
             TRANSPORT_RETEST: SECOND_RESERVATION,
             REPAIR: 3.000501,
+            CAPACITY_FALLBACK: 4.000668,
         }.get(task.experiment_id)
         or task.results.required_files != ["metrics.json", "worker.log", "environment.json"]
         or task.results.metric_min != {"gpu_memory_smoke_passed": 1.0}
@@ -199,6 +205,36 @@ def repair_parent(history: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def capacity_parent(history: dict[str, Any] | None) -> dict[str, Any]:
+    parent = repair_parent(history)
+    assert history is not None
+    prior = history.get(REPAIR)
+    if prior is None or record_hash(prior) != REPAIR_RECORD_HASH:
+        raise ValueError("capacity_predecessor_not_verified")
+    c = prior["campaign"]
+    if (
+        prior["state"] != "PREFLIGHT_BLOCKED"
+        or prior["create_intent"] is not False
+        or prior["pod_id"] is not None
+        or prior["collect_attempts"] != 0
+        or prior["create_http_failure"].get("reason_class") != "capacity"
+        or prior["create_http_failure"].get("http_status") != 400
+        or prior["create_http_failure"].get("ambiguous") is not False
+        or c["predecessor"] != parent
+        or c["reserved_usd"] != 4.000668
+        or c["reserved_seconds"] != 2400
+    ):
+        raise ValueError("capacity_predecessor_not_eligible")
+    return {
+        "experiment_id": REPAIR,
+        "record_sha256": record_hash(prior),
+        "reserved_usd": c["reserved_usd"],
+        "reserved_seconds": c["reserved_seconds"],
+        "aggregate_resource_seconds": c["aggregate_resource_seconds"],
+        "original_wall_deadline": c["wall_deadline"],
+    }
+
+
 def reserve(
     record: dict[str, Any],
     task: Task,
@@ -213,9 +249,11 @@ def reserve(
     if record.get("campaign") is not None or record.get("attempts", 0) != 0:
         raise ValueError("campaign_already_attempted")
     parent = None
-    if task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR}:
+    if task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR, CAPACITY_FALLBACK}:
         parent = (
-            repair_parent(history)
+            capacity_parent(history)
+            if task.experiment_id == CAPACITY_FALLBACK
+            else repair_parent(history)
             if task.experiment_id == REPAIR
             else retest_parent(prior, original, task)
             if task.experiment_id == TRANSPORT_RETEST
@@ -247,6 +285,7 @@ def reserve(
             DIAGNOSTIC_RETRY: 2,
             TRANSPORT_RETEST: 3,
             REPAIR: 4,
+            CAPACITY_FALLBACK: 5,
         }[task.experiment_id]
         record["campaign"]["predecessor"] = parent
     record["attempts"] = 1

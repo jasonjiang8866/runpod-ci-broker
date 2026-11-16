@@ -1192,3 +1192,92 @@ def test_repair_cannot_use_old_worker_source_or_image():
     for changes in [{"source_sha": SOURCE}, {"image": IMAGE}]:
         with pytest.raises(ValueError, match="approved_campaign_contract_required"):
             validate_task(task.model_copy(update=changes))
+
+
+@pytest.fixture
+def capacity_setup(repair_setup, monkeypatch):
+    from runpod_ci_broker import campaign
+    from runpod_ci_broker.live import CreateHTTPError
+
+    repair, cloud, _ = repair_setup
+    create = cloud.create
+
+    def refused(body):
+        cloud.creates += 1
+        raise CreateHTTPError(
+            HTTPError(
+                "https://api.invalid",
+                400,
+                "refused",
+                {},
+                io.BytesIO(
+                    json.dumps(
+                        {
+                            "detail": "There are no longer any instances available with the requested specifications. Please refresh and try again."
+                        }
+                    ).encode()
+                ),
+            )
+        )
+
+    cloud.create = refused
+    repair.start(confirmed=True, window_end=cloud.clock + 3600)
+    cloud.create = create
+    previous = repair.j.read()
+    monkeypatch.setattr(campaign, "REPAIR_RECORD_HASH", campaign.record_hash(previous))
+    cloud.clock += 4000
+    journal = ControllerJournal(
+        repair.j.store,
+        SCOPE,
+        campaign.CAPACITY_FALLBACK,
+        {**IDENTITY, "run_id": "13000"},
+        lambda _: True,
+    )
+    task = Task.model_validate_json(Path("examples/capacity-fallback-smoke.json").read_text())
+    fallback = Controller(
+        task, journal, cloud, repair.snapshot, repair.output, now=cloud.now, sleep=cloud.sleep
+    )
+    return fallback, cloud, repair.j, previous
+
+
+def test_capacity_fallback_changes_candidate_and_cannot_repeat(capacity_setup):
+    from runpod_ci_broker.worker import MIG
+
+    fallback, cloud, previous_journal, previous = capacity_setup
+    started = cloud.clock
+    result = fallback.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 5 and cloud.clock >= started + 5
+    assert result["selected"]["gpu_id"] == MIG
+    assert result["predecessor_absence"] == "complete_scope_inventory_twice_before_create"
+    assert any("prior_capacity_refusal" in d["reasons"] for d in result["decisions"])
+    assert result["campaign"]["reserved_usd"] == 5.000835
+    assert result["campaign"]["reserved_seconds"] == 3000
+    assert result["campaign"]["attempt_number"] == 5
+    fallback.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 5 and previous_journal.read() == previous
+
+
+@pytest.mark.parametrize(
+    "change", [{"reason_class": "unclassified"}, {"http_status": 403}, {"ambiguous": True}]
+)
+def test_capacity_fallback_refuses_unknown_or_auth_error(capacity_setup, monkeypatch, change):
+    from runpod_ci_broker import campaign
+
+    fallback, cloud, previous_journal, previous = capacity_setup
+    previous["create_http_failure"].update(change)
+    monkeypatch.setattr(campaign, "REPAIR_RECORD_HASH", campaign.record_hash(previous))
+    with previous_journal.lock():
+        previous_journal.write(previous)
+    with pytest.raises(ValueError, match="capacity_predecessor_not_eligible"):
+        fallback.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 4 and fallback.j.read() is None
+
+
+def test_capacity_fallback_refuses_resource_in_second_inventory(capacity_setup):
+    fallback, cloud, _, _ = capacity_setup
+    cloud.inventory = lambda: [
+        {"name": "old-refused-name", "env": {"RCB_TOOL": "runpod-ci-broker/v1", "RCB_SCOPE": SCOPE}}
+    ]
+    with pytest.raises(ProviderError, match="existing_scope_resource"):
+        fallback.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 4 and fallback.j.read()["campaign"] is None
