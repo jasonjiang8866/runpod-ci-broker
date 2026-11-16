@@ -18,6 +18,7 @@ from .campaign import (
     CAMPAIGN,
     CAPACITY_FALLBACK,
     DIAGNOSTIC_RETRY,
+    REGRESSION,
     REPAIR,
     REPOSITORY,
     SCOPE,
@@ -143,6 +144,7 @@ class Controller:
                 TRANSPORT_RETEST,
                 REPAIR,
                 CAPACITY_FALLBACK,
+                REGRESSION,
             }:
                 if self.j.recovery or self.j.identity["event"] != "workflow_dispatch":
                     raise ValueError("retry_manual_launch_required")
@@ -189,7 +191,7 @@ class Controller:
             if self.j.other_unresolved():
                 raise ProviderError("scope_has_unresolved_intent")
             candidates, inventory = self.snapshot(self.task)
-            if self.task.experiment_id == CAPACITY_FALLBACK:
+            if self.task.experiment_id in {CAPACITY_FALLBACK, REGRESSION}:
                 assert history is not None
                 refused = history[REPAIR]["requested_allocation"]
                 for candidate in candidates:
@@ -226,7 +228,7 @@ class Controller:
                 return r
             # A second complete inventory immediately before reserving intent catches old
             # same-name or scope resources even when their config fingerprint changed.
-            if self.task.experiment_id == CAPACITY_FALLBACK:
+            if self.task.experiment_id in {CAPACITY_FALLBACK, REGRESSION}:
                 self.sleep(5)
             for p in self.api.inventory():
                 env = p.get("env", {})
@@ -234,7 +236,7 @@ class Controller:
                     env.get("RCB_TOOL") == "runpod-ci-broker/v1" and env.get("RCB_SCOPE") == SCOPE
                 ):
                     raise ProviderError("existing_scope_resource")
-            if self.task.experiment_id == CAPACITY_FALLBACK:
+            if self.task.experiment_id in {CAPACITY_FALLBACK, REGRESSION}:
                 r["predecessor_absence"] = "complete_scope_inventory_twice_before_create"
             selected = r["selected"]
             r["requested_allocation"] = dict(selected)
@@ -248,7 +250,7 @@ class Controller:
                 history=history,
             )
             preferred_centers = [selected["data_center"]]
-            if self.task.experiment_id in {REPAIR, CAPACITY_FALLBACK}:
+            if self.task.experiment_id in {REPAIR, CAPACITY_FALLBACK, REGRESSION}:
                 # Fresh eligible rows only; requested placement remains advisory.
                 preferred_centers += sorted(
                     {
@@ -406,7 +408,7 @@ class Controller:
                         != r["result_capability_sha256"]
                     ):
                         raise ProviderError("result_capability_unrecoverable")
-                    if self.task.experiment_id.startswith(CAMPAIGN + "-repair-"):
+                    if self.task.experiment_id in {REPAIR, CAPACITY_FALLBACK, REGRESSION}:
                         left = r["campaign"]["collection_deadline"] - self.now()
                         phase = RunPodResultReader(r["pod_id"], 8000, token).readiness(
                             self.task, r["pod_id"], min(5, left)
@@ -522,6 +524,7 @@ def main() -> int:
     attempt.add_argument("--transport-retest", action="store_true")
     attempt.add_argument("--repair", action="store_true")
     attempt.add_argument("--capacity-fallback", action="store_true")
+    attempt.add_argument("--regression", action="store_true")
     parser.add_argument("--retry-window-end", type=float)
     args = parser.parse_args()
     output = Path("out/live")
@@ -532,7 +535,11 @@ def main() -> int:
         if args.action == "start" and recovery:
             raise ValueError("recovery_never_creates")
         if (
-            args.diagnostic_retry or args.transport_retest or args.repair or args.capacity_fallback
+            args.diagnostic_retry
+            or args.transport_retest
+            or args.repair
+            or args.capacity_fallback
+            or args.regression
         ) and (args.action != "start" or recovery):
             raise ValueError("retry_manual_launch_required")
         task = Task.model_validate_json(Path("examples/approved-broker-smoke.json").read_text())
@@ -549,7 +556,11 @@ def main() -> int:
         # Prior records are immutable. All attempts share the same scope lock.
         # Recovery follows the successor once it exists, never creates one itself.
         _, scope = journal.load()
-        if args.capacity_fallback or CAPACITY_FALLBACK in scope["records"]:
+        if args.regression or REGRESSION in scope["records"]:
+            task = Task.model_validate_json(Path("examples/regression-smoke.json").read_text())
+            validate_task(task)
+            journal.experiment_id = REGRESSION
+        elif args.capacity_fallback or CAPACITY_FALLBACK in scope["records"]:
             task = Task.model_validate_json(
                 Path("examples/capacity-fallback-smoke.json").read_text()
             )

@@ -1281,3 +1281,181 @@ def test_capacity_fallback_refuses_resource_in_second_inventory(capacity_setup):
     with pytest.raises(ProviderError, match="existing_scope_resource"):
         fallback.start(confirmed=True, window_end=cloud.clock + 3600)
     assert cloud.creates == 4 and fallback.j.read()["campaign"] is None
+
+
+def finish_mig_smoke(controller, monkeypatch):
+    """Exercise real admission, bundle checks, upload receipt and cleanup on fake MIG."""
+
+    class Reader:
+        def readiness(self, *args):
+            return "ready"
+
+    monkeypatch.setattr("runpod_ci_broker.controller.RunPodResultReader", lambda *a: Reader())
+
+    def collect(task, pod_id, reader, dest, **kwargs):
+        manifest, files = bundle(task, pod_id)
+        environment = json.loads(files["environment.json"])
+        environment["observed"].update(
+            device_name="NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb",
+            architecture="sm_120",
+            memory_bytes=int(23.625 * 1024**3),
+        )
+        files["environment.json"] = json.dumps(environment).encode()
+        manifest["files"]["environment.json"] = {
+            "bytes": len(files["environment.json"]),
+            "sha256": hashlib.sha256(files["environment.json"]).hexdigest(),
+        }
+        return save_bundle(task, pod_id, manifest, files, dest)
+
+    monkeypatch.setattr("runpod_ci_broker.controller.collect_https", collect)
+    assert controller.collect()["gpu_verified"]
+    identity = controller.j.identity
+    github = GitHubEvidence()
+    monkeypatch.setattr(
+        github,
+        "get",
+        lambda _: {
+            "id": 99,
+            "expired": False,
+            "digest": "sha256:" + "d" * 64,
+            "name": f"smoke-bundle-{identity['run_id']}-{identity['attempt']}",
+            "workflow_run": {"id": int(identity["run_id"]), "head_sha": identity["sha"]},
+        },
+    )
+    controller.receipt("99", "d" * 64, github)
+    assert controller.cleanup()["state"] == "ACCEPTED"
+
+
+@pytest.fixture
+def regression_setup(capacity_setup, monkeypatch):
+    from runpod_ci_broker import campaign
+
+    fallback, cloud, _, _ = capacity_setup
+    fallback.start(confirmed=True, window_end=cloud.clock + 3600)
+    finish_mig_smoke(fallback, monkeypatch)
+    history = copy.deepcopy(fallback.j.load()[1]["records"])
+    monkeypatch.setattr(
+        campaign, "ACCEPTED_RECORD_HASH", campaign.record_hash(history[campaign.CAPACITY_FALLBACK])
+    )
+    cloud.clock += 4000
+    journal = ControllerJournal(
+        fallback.j.store,
+        SCOPE,
+        campaign.REGRESSION,
+        {**IDENTITY, "run_id": "14000"},
+        lambda _: True,
+    )
+    task = Task.model_validate_json(Path("examples/regression-smoke.json").read_text())
+    controller = Controller(
+        task, journal, cloud, fallback.snapshot, fallback.output, now=cloud.now, sleep=cloud.sleep
+    )
+    return controller, cloud, history
+
+
+def test_regression_full_lifecycle_preserves_history_and_cannot_repeat(
+    regression_setup, monkeypatch
+):
+    controller, cloud, history = regression_setup
+    r = controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 6
+    assert r["campaign"]["reserved_usd"] == 6.001002
+    assert r["campaign"]["reserved_seconds"] == 3600
+    assert r["campaign"]["attempt_number"] == 6
+    assert r["predecessor_absence"] == "complete_scope_inventory_twice_before_create"
+    finish_mig_smoke(controller, monkeypatch)
+    assert controller.j.read()["worker_readiness"] == "ready"
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 6 and cloud.pod is None
+    assert all(controller.j.load()[1]["records"][key] == value for key, value in history.items())
+
+
+@pytest.mark.parametrize("field", ["results_saved", "pod_deleted_confirmed", "experiment_passed"])
+def test_regression_refuses_incomplete_predecessor_even_with_matching_hash(
+    regression_setup, monkeypatch, field
+):
+    from runpod_ci_broker import campaign
+
+    controller, cloud, history = regression_setup
+    prior = history[campaign.CAPACITY_FALLBACK]
+    prior["facts"][field] = False
+    monkeypatch.setattr(campaign, "ACCEPTED_RECORD_HASH", campaign.record_hash(prior))
+    with controller.j.lock():
+        version, scope = controller.j.owned()
+        scope["records"][campaign.CAPACITY_FALLBACK] = prior
+        controller.j.checkpoint(version, scope)
+    with pytest.raises(ValueError, match="regression_predecessor_not_eligible"):
+        controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 5 and controller.j.read() is None
+
+
+def test_regression_refuses_history_change(regression_setup):
+    from runpod_ci_broker import campaign
+
+    controller, cloud, _ = regression_setup
+    with controller.j.lock():
+        version, scope = controller.j.owned()
+        scope["records"][campaign.CAPACITY_FALLBACK]["campaign"]["reserved_usd"] = 0
+        controller.j.checkpoint(version, scope)
+    with pytest.raises(ValueError, match="regression_predecessor_not_verified"):
+        controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 5
+
+
+@pytest.mark.parametrize("window", [None, 100, 5000])
+def test_regression_requires_bounded_fresh_window(regression_setup, window):
+    controller, cloud, _ = regression_setup
+    with pytest.raises(ValueError, match="explicit_retry_execution_window_required"):
+        controller.start(
+            confirmed=True, window_end=None if window is None else cloud.clock + window
+        )
+    assert cloud.creates == 5 and controller.j.read() is None
+
+
+def test_regression_readiness_403_is_terminal_and_cleans(regression_setup, monkeypatch):
+    controller, cloud, _ = regression_setup
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+
+    class Reader:
+        def readiness(self, *args):
+            raise ResultHTTPError(403, "readiness")
+
+    monkeypatch.setattr("runpod_ci_broker.controller.RunPodResultReader", lambda *a: Reader())
+    r = controller.collect()
+    assert r["state"] == "REJECTED" and r["facts"]["pod_deleted_confirmed"]
+    assert r["collect_attempts"] == 0 and cloud.creates == 6
+    assert r["result_http_failures"][0]["http_status"] == 403
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 6
+
+
+def test_recovery_cli_follows_regression_without_create(regression_setup, monkeypatch):
+    import runpod_ci_broker.controller as module
+
+    controller, cloud, history = regression_setup
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    finish_mig_smoke(controller, monkeypatch)
+    real_controller = Controller
+    monkeypatch.setattr(
+        module,
+        "context",
+        lambda: {
+            **IDENTITY,
+            "run_id": "15000",
+            "path": ".github/workflows/recover-smoke.yml",
+            "event": "workflow_run",
+        },
+    )
+    monkeypatch.setattr(module, "GitHubContentsStore", lambda _: controller.j.store)
+    monkeypatch.setattr(module, "LiveAPI", lambda **kw: cloud)
+    monkeypatch.setattr(module, "ReadOnlyRunPod", lambda: controller)
+    monkeypatch.setattr(
+        module,
+        "Controller",
+        lambda task, journal, api, snapshot, output: real_controller(
+            task, journal, api, snapshot, controller.output, now=cloud.now, sleep=cloud.sleep
+        ),
+    )
+    monkeypatch.setattr("sys.argv", ["controller", "collect"])
+    assert module.main() == 0
+    assert cloud.creates == 6 and cloud.pod is None
+    assert all(controller.j.load()[1]["records"][key] == value for key, value in history.items())
