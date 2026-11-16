@@ -18,6 +18,10 @@ on:
         description: One newly authorized transport retest after the definitive second create refusal
         type: boolean
         default: false
+      repair:
+        description: One readiness repair attempt with the published immutable worker; keeps all prior reservations
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -46,22 +50,30 @@ jobs:
       - name: Verify anonymous pull of the reviewed image
         timeout-minutes: 3
         env:
+          RCB_REPAIR: ${{ inputs.repair }}
           DOCKER_CONFIG: ${{ runner.temp }}/broker-anonymous-docker
         run: |
           set -euo pipefail
-          image="$(python -c 'import json; print(json.load(open("examples/approved-broker-smoke.json"))["image"])')"
+          config=examples/approved-broker-smoke.json
+          if [ "$RCB_REPAIR" = "true" ]; then config=examples/repair-smoke.json; fi
+          image="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$config")"
           docker pull "$image"
           actual="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-          test "$actual" = '2e6fe6930c02fc2469079a1d8e64025562aff07f'
+          expected="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$config")"
+          test "$actual" = "$expected"
       - name: Persist intent and create at most once
         continue-on-error: true
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RCB_REPAIR: ${{ inputs.repair }}
           RCB_DIAGNOSTIC_RETRY: ${{ inputs.diagnostic_retry }}
           RCB_TRANSPORT_RETEST: ${{ inputs.transport_retest }}
           RCB_RETRY_WINDOW_END: ${{ inputs.retry_window_end }}
         run: |
-          if [ "$RCB_DIAGNOSTIC_RETRY" = "true" ] && [ "$RCB_TRANSPORT_RETEST" = "true" ]; then
+          if [ "$RCB_REPAIR" = "true" ]; then
+            test "$RCB_DIAGNOSTIC_RETRY" != "true" && test "$RCB_TRANSPORT_RETEST" != "true" || exit 2
+            uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --repair --retry-window-end "$RCB_RETRY_WINDOW_END"
+          elif [ "$RCB_DIAGNOSTIC_RETRY" = "true" ] && [ "$RCB_TRANSPORT_RETEST" = "true" ]; then
             exit 2
           elif [ "$RCB_TRANSPORT_RETEST" = "true" ]; then
             uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --transport-retest --retry-window-end "$RCB_RETRY_WINDOW_END"

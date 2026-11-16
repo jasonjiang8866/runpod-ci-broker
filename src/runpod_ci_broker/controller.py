@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from .campaign import (
     CAMPAIGN,
     DIAGNOSTIC_RETRY,
+    REPAIR,
     REPOSITORY,
     SCOPE,
     TRANSPORT_RETEST,
@@ -135,11 +136,12 @@ class Controller:
         with self.j.lock():
             if self.j.read() is not None:
                 return self.record()  # reruns NEVER issue a second POST, even after deletion
-            prior = original = None
-            if self.task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST}:
+            prior = original = history = None
+            if self.task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR}:
                 if self.j.recovery or self.j.identity["event"] != "workflow_dispatch":
                     raise ValueError("retry_manual_launch_required")
                 records = self.j.owned()[1]["records"]
+                history = records
                 original = records.get(CAMPAIGN)
                 prior = (
                     records.get(DIAGNOSTIC_RETRY)
@@ -151,7 +153,13 @@ class Controller:
                     raise ValueError("previous_controller_not_confirmed_completed")
                 # Validate the explicit window before persisting any successor record.
                 reserve(
-                    {}, self.task, self.now(), prior=prior, original=original, window_end=window_end
+                    {},
+                    self.task,
+                    self.now(),
+                    prior=prior,
+                    original=original,
+                    window_end=window_end,
+                    history=history,
                 )
             r = {
                 **plan(self.task, [], mode="live"),
@@ -211,7 +219,28 @@ class Controller:
                     raise ProviderError("existing_scope_resource")
             selected = r["selected"]
             r["requested_allocation"] = dict(selected)
-            reserve(r, self.task, self.now(), prior=prior, original=original, window_end=window_end)
+            reserve(
+                r,
+                self.task,
+                self.now(),
+                prior=prior,
+                original=original,
+                window_end=window_end,
+                history=history,
+            )
+            preferred_centers = [selected["data_center"]]
+            if self.task.experiment_id == REPAIR:
+                # Fresh eligible rows only; requested placement remains advisory.
+                preferred_centers += sorted(
+                    {
+                        d["candidate"]["data_center"]
+                        for d in r["decisions"]
+                        if not d["reasons"]
+                        and d["candidate"]["gpu_id"] == selected["gpu_id"]
+                        and d["candidate"]["data_center"] != selected["data_center"]
+                    }
+                )
+                r["requested_data_centers"] = preferred_centers
             token = secrets.token_hex(32)
             r["result_capability_sha256"] = hashlib.sha256(token.encode()).hexdigest()
             r["create_intent"], r["paid_authorized"] = True, True
@@ -220,7 +249,7 @@ class Controller:
                 "image": self.task.image,
                 "gpu": {"id": selected["gpu_id"], "count": 1, "minCudaVersion": "12.8"},
                 "cloud": "SECURE",
-                "dataCenterIds": [selected["data_center"]],
+                "dataCenterIds": preferred_centers,
                 "disk": 5,
                 "mounts": {},
                 "ports": ["8000/http"],
@@ -472,6 +501,7 @@ def main() -> int:
     attempt = parser.add_mutually_exclusive_group()
     attempt.add_argument("--diagnostic-retry", action="store_true")
     attempt.add_argument("--transport-retest", action="store_true")
+    attempt.add_argument("--repair", action="store_true")
     parser.add_argument("--retry-window-end", type=float)
     args = parser.parse_args()
     output = Path("out/live")
@@ -481,7 +511,7 @@ def main() -> int:
         recovery = identity["path"].endswith("recover-smoke.yml")
         if args.action == "start" and recovery:
             raise ValueError("recovery_never_creates")
-        if (args.diagnostic_retry or args.transport_retest) and (
+        if (args.diagnostic_retry or args.transport_retest or args.repair) and (
             args.action != "start" or recovery
         ):
             raise ValueError("retry_manual_launch_required")
@@ -499,7 +529,11 @@ def main() -> int:
         # Prior records are immutable. All attempts share the same scope lock.
         # Recovery follows the successor once it exists, never creates one itself.
         _, scope = journal.load()
-        if args.transport_retest or TRANSPORT_RETEST in scope["records"]:
+        if args.repair or REPAIR in scope["records"]:
+            task = Task.model_validate_json(Path("examples/repair-smoke.json").read_text())
+            validate_task(task)
+            journal.experiment_id = REPAIR
+        elif args.transport_retest or TRANSPORT_RETEST in scope["records"]:
             task = Task.model_validate_json(
                 Path("examples/transport-retest-smoke.json").read_text()
             )
