@@ -600,8 +600,15 @@ def test_fork_and_nonmain_context_refused(monkeypatch):
 @pytest.mark.parametrize(
     "status,ambiguous",
     [
-        (400, False), (401, False), (403, False), (402, False), (422, False),
-        (302, True), (429, True), (500, True), (503, True),
+        (400, False),
+        (401, False),
+        (403, False),
+        (402, False),
+        (422, False),
+        (302, True),
+        (429, True),
+        (500, True),
+        (503, True),
     ],
 )
 def test_create_api_no_retry_and_sanitized_unknown(monkeypatch, status, ambiguous):
