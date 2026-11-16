@@ -30,3 +30,18 @@ Validation: 364 offline tests, Ruff and strict mypy passed. A real loopback HTTP
 test verifies authenticated pre-compute status, 503 for premature result reads,
 ready transition, identity mismatch rejection and bundle availability. These are
 not cloud/GPU acceptance results.
+
+## Pinned fourth attempt
+
+Worker publication run [43928479656](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43928479656)
+succeeded from source `567edcc32529ad017d13edbc154971aea4d9d624`.
+`examples/repair-smoke.json` pins its anonymous GHCR digest. This manual attempt
+requires the exact hashes of all three historical records, a completed previous
+controller, an explicit 600–3600-second launch window, and fresh complete scope
+inventory. It adds one 600-second reservation: cumulative USD 4.000668 / 2400 s,
+within the unchanged USD 20 / 18000 s campaign. Reservations are not charges.
+Only one new create is enabled here. Reruns cannot create again; recovery follows
+this record and never creates. The second planned repair attempt, if needed,
+requires reviewing the fourth result before a separate pinned contract is added.
+Fresh eligible data centers for the selected GPU are all offered as placement
+preferences; actual hardware, price and identity still require runtime admission.

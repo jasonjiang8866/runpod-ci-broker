@@ -1106,3 +1106,89 @@ def test_recovery_cli_selects_third_record_without_create(retest_setup, monkeypa
     assert module.main() == 2
     assert cloud.creates == 3 and retest.j.read()["facts"]["pod_deleted_confirmed"]
     assert original.read() == first_record and second.read() == second_record
+
+
+@pytest.fixture
+def repair_setup(retest_setup, monkeypatch):
+    from runpod_ci_broker import campaign
+
+    retest, cloud, original, _second, _first_record, _second_record = retest_setup
+    create = cloud.create
+
+    def refused(body):
+        cloud.creates += 1
+        raise ProviderError("invalid_request")
+
+    cloud.create = refused
+    retest.start(confirmed=True, window_end=cloud.clock + 3600)
+    cloud.create = create
+    history = copy.deepcopy(retest.j.load()[1]["records"])
+    monkeypatch.setattr(
+        campaign,
+        "REPAIR_HISTORY",
+        {key: campaign.record_hash(value) for key, value in history.items()},
+    )
+    cloud.clock += 4000
+    journal = ControllerJournal(
+        original.store, SCOPE, campaign.REPAIR, {**IDENTITY, "run_id": "12000"}, lambda _: True
+    )
+    task = Task.model_validate_json(Path("examples/repair-smoke.json").read_text())
+    repair = Controller(
+        task, journal, cloud, retest.snapshot, retest.output, now=cloud.now, sleep=cloud.sleep
+    )
+    return repair, cloud, history
+
+
+def test_repair_retains_three_hashes_and_reserves_one_attempt(repair_setup):
+    repair, cloud, history = repair_setup
+    r = repair.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 4
+    assert r["campaign"]["reserved_usd"] == 4.000668
+    assert r["campaign"]["reserved_seconds"] == 2400
+    assert r["campaign"]["attempt_deadline"] == cloud.clock + 600
+    assert r["campaign"]["attempt_number"] == 4
+    assert cloud.pod["image"] == repair.task.image
+    assert cloud.pod["dataCenterIds"] == r["requested_data_centers"]
+    repair.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 4
+    after = repair.j.load()[1]["records"]
+    assert all(after[key] == value for key, value in history.items())
+
+
+def test_repair_refuses_history_change_before_create(repair_setup):
+    repair, cloud, _ = repair_setup
+    with repair.j.lock():
+        version, scope = repair.j.owned()
+        scope["records"][CAMPAIGN]["campaign"]["reserved_usd"] = 0
+        repair.j.checkpoint(version, scope)
+    with pytest.raises(ValueError, match="repair_history_not_verified"):
+        repair.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 3 and repair.j.read() is None
+
+
+def test_repair_waits_for_readiness_without_spending_collection(repair_setup, monkeypatch):
+    repair, cloud, _ = repair_setup
+    repair.start(confirmed=True, window_end=cloud.clock + 3600)
+    phases = iter(["starting", "running", "ready"])
+
+    class Reader:
+        def readiness(self, *args):
+            return next(phases)
+
+    monkeypatch.setattr("runpod_ci_broker.controller.RunPodResultReader", lambda *args: Reader())
+    # Existing collector fixture denies; readiness must not use collect attempts.
+    r = repair.collect()
+    assert r["worker_readiness"] == "ready"
+    assert r["collect_attempts"] == 1
+    assert r["facts"]["pod_deleted_confirmed"]
+    assert cloud.creates == 4 and r["state"] == "REJECTED"
+
+
+def test_repair_cannot_use_old_worker_source_or_image():
+    from runpod_ci_broker.campaign import IMAGE, SOURCE
+
+    task = Task.model_validate_json(Path("examples/repair-smoke.json").read_text())
+    validate_task(task)
+    for changes in [{"source_sha": SOURCE}, {"image": IMAGE}]:
+        with pytest.raises(ValueError, match="approved_campaign_contract_required"):
+            validate_task(task.model_copy(update=changes))

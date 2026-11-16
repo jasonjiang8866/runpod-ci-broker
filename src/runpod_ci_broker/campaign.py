@@ -15,6 +15,17 @@ REPOSITORY = "jasonjiang8866/runpod-ci-broker"
 CAMPAIGN = "broker-smoke-20261107"
 DIAGNOSTIC_RETRY = CAMPAIGN + "-diagnostic-2"
 TRANSPORT_RETEST = CAMPAIGN + "-transport-3"
+REPAIR = CAMPAIGN + "-repair-4"
+REPAIR_SOURCE = "567edcc32529ad017d13edbc154971aea4d9d624"
+REPAIR_IMAGE = (
+    "ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:"
+    "9226c6ae489e22f89f014cec7f2dfd80ebe1b9d661fcfe318807035c75f3ae03"
+)
+REPAIR_HISTORY = {
+    CAMPAIGN: "46bda3979ff7559b393bfab767341a44fbc25596a2b15736ea582fff5e4c0511",
+    DIAGNOSTIC_RETRY: "9e66483324cd361af71486d7459b8d2adb22d3e88a7addaa3ce44e3a5ba71916",
+    TRANSPORT_RETEST: "f757328fd8b8215c84321b301f3fffd3069e16a1f6ed2310b3dcd717497ce16e",
+}
 PRIOR_RESERVATION = 1.000167
 SECOND_RESERVATION = 2.000334
 SCOPE = "broker-central-smoke"
@@ -28,11 +39,11 @@ IMAGE = (
 def validate_task(task: Task) -> dict[str, Any]:
     b = estimate(task)
     if (
-        task.experiment_id not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST}
+        task.experiment_id not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR}
         or task.scope != SCOPE
         or task.repository != REPOSITORY
-        or task.source_sha != SOURCE
-        or task.image != IMAGE
+        or task.source_sha != (REPAIR_SOURCE if task.experiment_id == REPAIR else SOURCE)
+        or task.image != (REPAIR_IMAGE if task.experiment_id == REPAIR else IMAGE)
         or task.strategy != "flexible_smoke"
         or task.entrypoint != ["broker-cuda-memory-smoke"]
         or set(task.gpu_allowlist) != CONSUMER | {MIG}
@@ -64,6 +75,7 @@ def validate_task(task: Task) -> dict[str, Any]:
             CAMPAIGN: 0,
             DIAGNOSTIC_RETRY: PRIOR_RESERVATION,
             TRANSPORT_RETEST: SECOND_RESERVATION,
+            REPAIR: 3.000501,
         }.get(task.experiment_id)
         or task.results.required_files != ["metrics.json", "worker.log", "environment.json"]
         or task.results.metric_min != {"gpu_memory_smoke_passed": 1.0}
@@ -153,6 +165,40 @@ def retest_parent(
     }
 
 
+def record_hash(record: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(record, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
+def repair_parent(history: dict[str, Any] | None) -> dict[str, Any]:
+    """One reviewed immutable history, not a general retry or a new budget."""
+    if history is None or any(
+        name not in history or record_hash(history[name]) != digest
+        for name, digest in REPAIR_HISTORY.items()
+    ):
+        raise ValueError("repair_history_not_verified")
+    prior = history[TRANSPORT_RETEST]
+    c = prior["campaign"]
+    if (
+        prior["state"] != "PREFLIGHT_BLOCKED"
+        or prior["create_intent"] is not False
+        or prior["pod_id"] is not None
+        or prior["collect_attempts"] != 0
+        or c["reserved_usd"] != 3.000501
+        or c["reserved_seconds"] != 1800
+    ):
+        raise ValueError("repair_parent_not_eligible")
+    return {
+        "experiment_id": TRANSPORT_RETEST,
+        "record_sha256": record_hash(prior),
+        "reserved_usd": c["reserved_usd"],
+        "reserved_seconds": c["reserved_seconds"],
+        "aggregate_resource_seconds": c["aggregate_resource_seconds"],
+        "original_wall_deadline": c["wall_deadline"],
+    }
+
+
 def reserve(
     record: dict[str, Any],
     task: Task,
@@ -161,14 +207,17 @@ def reserve(
     prior: dict[str, Any] | None = None,
     original: dict[str, Any] | None = None,
     window_end: float | None = None,
+    history: dict[str, Any] | None = None,
 ) -> None:
     b = validate_task(task)
     if record.get("campaign") is not None or record.get("attempts", 0) != 0:
         raise ValueError("campaign_already_attempted")
     parent = None
-    if task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST}:
+    if task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR}:
         parent = (
-            retest_parent(prior, original, task)
+            repair_parent(history)
+            if task.experiment_id == REPAIR
+            else retest_parent(prior, original, task)
             if task.experiment_id == TRANSPORT_RETEST
             else retry_parent(prior, task)
         )
@@ -194,7 +243,11 @@ def reserve(
         "supplier_bill_usd": None,
     }
     if parent:
-        record["campaign"]["attempt_number"] = 3 if task.experiment_id == TRANSPORT_RETEST else 2
+        record["campaign"]["attempt_number"] = {
+            DIAGNOSTIC_RETRY: 2,
+            TRANSPORT_RETEST: 3,
+            REPAIR: 4,
+        }[task.experiment_id]
         record["campaign"]["predecessor"] = parent
     record["attempts"] = 1
 
