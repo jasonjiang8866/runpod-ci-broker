@@ -14,7 +14,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from .campaign import CAMPAIGN, REPOSITORY, SCOPE, may_collect, observe, reserve, validate_task
+from .campaign import (
+    CAMPAIGN,
+    DIAGNOSTIC_RETRY,
+    REPOSITORY,
+    SCOPE,
+    may_collect,
+    observe,
+    reserve,
+    retry_parent,
+    validate_task,
+)
 from .cleanup import CleanupClient, cleanup_owned
 from .export import ResultHTTPError, RunPodResultReader, capability_valid, collect_https
 from .handover import ControllerJournal, GitHubEvidence, context
@@ -119,12 +129,23 @@ class Controller:
         self.save(r)
         return p
 
-    def start(self, *, confirmed: bool = False) -> dict[str, Any]:
+    def start(self, *, confirmed: bool = False, window_end: float | None = None) -> dict[str, Any]:
         if not confirmed:
             raise ValueError("explicit_paid_confirmation_required")
         with self.j.lock():
             if self.j.read() is not None:
                 return self.record()  # reruns NEVER issue a second POST, even after deletion
+            prior = None
+            if self.task.experiment_id == DIAGNOSTIC_RETRY:
+                if self.j.recovery or self.j.identity["event"] != "workflow_dispatch":
+                    raise ValueError("retry_manual_launch_required")
+                prior = self.j.owned()[1]["records"].get(CAMPAIGN)
+                retry_parent(prior, self.task)
+                previous = self.j.previous_controller
+                if previous is None or not self.j.completed(previous):
+                    raise ValueError("previous_controller_not_confirmed_completed")
+                # Validate the explicit window before persisting any successor record.
+                reserve({}, self.task, self.now(), prior=prior, window_end=window_end)
             r = {
                 **plan(self.task, [], mode="live"),
                 "state": "PREFLIGHT",
@@ -140,7 +161,8 @@ class Controller:
                 "cleanup_verification": "not_applicable",
                 "metrics": {},
                 "exit_code": None,
-                "name": "rcb-" + hashlib.sha256((SCOPE + ":" + CAMPAIGN).encode()).hexdigest()[:24],
+                "name": "rcb-"
+                + hashlib.sha256((SCOPE + ":" + self.task.experiment_id).encode()).hexdigest()[:24],
             }
             self.save(r)
             if self.j.other_unresolved():
@@ -182,7 +204,7 @@ class Controller:
                     raise ProviderError("existing_scope_resource")
             selected = r["selected"]
             r["requested_allocation"] = dict(selected)
-            reserve(r, self.task, self.now())
+            reserve(r, self.task, self.now(), prior=prior, window_end=window_end)
             token = secrets.token_hex(32)
             r["result_capability_sha256"] = hashlib.sha256(token.encode()).hexdigest()
             r["create_intent"], r["paid_authorized"] = True, True
@@ -422,6 +444,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["start", "collect", "receipt", "cleanup", "report"])
     parser.add_argument("--confirm-paid", action="store_true")
+    parser.add_argument("--diagnostic-retry", action="store_true")
+    parser.add_argument("--retry-window-end", type=float)
     args = parser.parse_args()
     output = Path("out/live")
     journal = None
@@ -430,6 +454,8 @@ def main() -> int:
         recovery = identity["path"].endswith("recover-smoke.yml")
         if args.action == "start" and recovery:
             raise ValueError("recovery_never_creates")
+        if args.diagnostic_retry and (args.action != "start" or recovery):
+            raise ValueError("retry_manual_launch_required")
         task = Task.model_validate_json(Path("examples/approved-broker-smoke.json").read_text())
         validate_task(task)
         github = GitHubEvidence()
@@ -441,6 +467,15 @@ def main() -> int:
             github.completed,
             recovery=recovery,
         )
+        # The original record is immutable. Both attempts share the same scope lock.
+        # Recovery follows the successor once it exists, never creates one itself.
+        _, scope = journal.load()
+        if args.diagnostic_retry or DIAGNOSTIC_RETRY in scope["records"]:
+            task = Task.model_validate_json(
+                Path("examples/diagnostic-retry-smoke.json").read_text()
+            )
+            validate_task(task)
+            journal.experiment_id = DIAGNOSTIC_RETRY
         if recovery and journal.read() is None:
             print('{"mode":"live","state":"NO_OWNED_INTENT","runpod_operations":0}')
             return 0
@@ -469,7 +504,7 @@ def main() -> int:
                 github,
             )
         elif controller is not None and args.action == "start":
-            r = controller.start(confirmed=args.confirm_paid)
+            r = controller.start(confirmed=args.confirm_paid, window_end=args.retry_window_end)
         elif controller is not None and args.action == "collect":
             r = controller.collect()
         elif controller is not None:

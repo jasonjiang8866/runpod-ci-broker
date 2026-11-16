@@ -3,9 +3,17 @@ on:
   workflow_dispatch:
     inputs:
       confirm_paid:
-        description: Use the existing USD 20 / 5 hour campaign, at most one short Pod attempt
+        description: Use the existing USD 20 / cumulative 5 hour campaign
         type: boolean
         default: false
+      diagnostic_retry:
+        description: One additional diagnostic attempt; requires a separately approved execution window
+        type: boolean
+        default: false
+      retry_window_end:
+        description: Approved UTC epoch seconds; must leave 600 to 3600 seconds at creation
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -45,7 +53,14 @@ jobs:
         continue-on-error: true
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-        run: uv run --locked python -m runpod_ci_broker.controller start --confirm-paid
+          RCB_DIAGNOSTIC_RETRY: ${{ inputs.diagnostic_retry }}
+          RCB_RETRY_WINDOW_END: ${{ inputs.retry_window_end }}
+        run: |
+          if [ "$RCB_DIAGNOSTIC_RETRY" = "true" ]; then
+            uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --diagnostic-retry --retry-window-end "$RCB_RETRY_WINDOW_END"
+          else
+            uv run --locked python -m runpod_ci_broker.controller start --confirm-paid
+          fi
       - name: Recover identity and collect within original deadline
         if: always()
         continue-on-error: true

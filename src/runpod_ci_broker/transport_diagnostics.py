@@ -32,6 +32,7 @@ def header_hints(headers: Mapping[str, str] | Message | None) -> dict[str, str |
         if media in {"text/html", "text/plain", "application/json", "application/octet-stream"}
         else "other_or_missing",
         "cf_ray_present": "CF-Ray" in headers,
+        "cf_challenge_hint": value("cf-mitigated") == "challenge",
         "via_present": "Via" in headers,
         "location_present": "Location" in headers,
         "www_authenticate_present": "WWW-Authenticate" in headers,

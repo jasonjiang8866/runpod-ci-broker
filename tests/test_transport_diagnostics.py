@@ -30,7 +30,16 @@ def test_header_projection_only_emits_fixed_categories(server):
     assert hints["media_type"] == "text/html"
     assert hints["cf_ray_present"] and hints["location_present"]
     assert "SECRET" not in json.dumps(hints)
-    assert len(json.dumps(hints)) < 300
+    assert len(json.dumps(hints)) < 350
+
+
+@pytest.mark.parametrize("value,expected", [("challenge", True), ("SECRET", False), ("", False)])
+def test_cloudflare_challenge_header_is_a_fixed_hint_only(value, expected):
+    headers = Message()
+    headers["cf-mitigated"] = value
+    hints = header_hints(headers)
+    assert hints["cf_challenge_hint"] is expected
+    assert "SECRET" not in json.dumps(hints)
 
 
 def test_missing_and_unrecognized_headers_remain_unknown():

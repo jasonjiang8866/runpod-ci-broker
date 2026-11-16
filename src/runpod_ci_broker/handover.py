@@ -108,12 +108,14 @@ class ControllerJournal(SharedJournal):
     ):
         super().__init__(store, scope, experiment)
         self.identity, self.completed, self.recovery = identity, completed, recovery
+        self.previous_controller: dict[str, Any] | None = None
 
     @contextmanager
     def lock(self) -> Iterator[None]:
         if self.holder is not None:
             raise LedgerError("scope_busy")
         version, value = self.load()
+        self.previous_controller = value.get("controller")
         if value["holder"] is not None:
             previous = value.get("controller")
             if not self.recovery or not isinstance(previous, dict):

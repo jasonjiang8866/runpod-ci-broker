@@ -1,5 +1,10 @@
 # Startup / HTTP 403 investigation — 2026-11-16
 
+Update: PR #10 and #11 are merged; both main-branch checks passed at
+`6e9b35a5553a8a06c76e59cc2b92811f27a5bcfe`. The investigation and executable
+[single successor proposal](diagnostic-retry.md) below preserve the original
+evidence and require a renewed execution window. No second Pod has been launched.
+
 The first paid Pod was deleted before its raw response or startup logs were
 captured. Its precise HTTP 403 source cannot be reconstructed from the saved
 report. `RUNNING` alone does not prove that the worker's HTTP server is listening.
