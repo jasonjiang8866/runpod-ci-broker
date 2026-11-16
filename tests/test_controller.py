@@ -1459,3 +1459,88 @@ def test_recovery_cli_follows_regression_without_create(regression_setup, monkey
     assert module.main() == 0
     assert cloud.creates == 6 and cloud.pod is None
     assert all(controller.j.load()[1]["records"][key] == value for key, value in history.items())
+
+
+def test_unspent_regression_preflight_can_recheck_then_create_once(regression_setup):
+    controller, cloud, history = regression_setup
+    snapshot = controller.snapshot
+
+    def unavailable(task):
+        candidates, inventory = snapshot(task)
+        for candidate in candidates:
+            candidate.capacity = "none"
+        return candidates, inventory
+
+    controller.snapshot = unavailable
+    first = controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert first["attempts"] == 0 and first["campaign"] is None
+    assert cloud.creates == 5
+    second = controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert second["preflight_history"] == [first]
+    controller.snapshot = snapshot
+    third = controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 6 and third["attempts"] == 1
+    assert third["preflight_history"][0] == first
+    assert third["preflight_history"][1] == {
+        k: v for k, v in second.items() if k != "preflight_history"
+    }
+    assert third["campaign"]["reserved_usd"] == 6.001002
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 6
+    assert all(controller.j.load()[1]["records"][k] == v for k, v in history.items())
+
+
+def test_unspent_regression_rechecks_are_bounded(regression_setup):
+    controller, cloud, _ = regression_setup
+    snapshot = controller.snapshot
+    calls = []
+
+    def unavailable(task):
+        calls.append(1)
+        candidates, inventory = snapshot(task)
+        for candidate in candidates:
+            candidate.capacity = "none"
+        return candidates, inventory
+
+    controller.snapshot = unavailable
+    for _ in range(5):
+        controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert len(calls) == 3 and cloud.creates == 5
+    assert len(controller.j.read()["preflight_history"]) == 2
+    assert controller.j.read()["campaign"] is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("create_intent", True),
+        ("attempts", 1),
+        ("pod_id", "unknown-id"),
+        ("campaign", {"reserved_usd": 6.001002}),
+        ("blockers", ["query_status_unverified"]),
+    ],
+)
+def test_preflight_recheck_never_reopens_possible_create(regression_setup, field, value):
+    controller, cloud, _ = regression_setup
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    r = controller.j.read()
+    r.update(
+        state="PREFLIGHT_BLOCKED",
+        blockers=["no_eligible_candidate"],
+        attempts=0,
+        create_intent=False,
+        pod_id=None,
+        campaign=None,
+        selected=None,
+        collect_attempts=0,
+    )
+    r[field] = value
+    with controller.j.lock():
+        controller.j.write(r)
+
+    def unexpected(task):
+        pytest.fail("a possible create must not reopen preflight")
+
+    controller.snapshot = unexpected
+    assert controller.start(confirmed=True, window_end=cloud.clock + 3600) == r
+    assert cloud.creates == 6
