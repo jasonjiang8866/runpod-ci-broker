@@ -30,6 +30,46 @@ IDENTITY = {
 }
 
 
+def test_real_collector_denial_keeps_safe_evidence_and_cleans(setup, monkeypatch, tmp_path):
+    from email.message import Message
+
+    controller, cloud, journal = setup
+    controller.start(confirmed=True)
+    cloud.pod["runtime"] = {"uptime": 1, "ip": "PRIVATE_SENTINEL"}
+    monkeypatch.setenv("HTTPS_PROXY", "https://user:PRIVATE_SENTINEL@proxy.invalid")
+    response = io.BytesIO(b"PRIVATE_SENTINEL")
+    requests = []
+    headers = Message()
+    headers["Server"] = "cloudflare"
+    headers["CF-Ray"] = "PRIVATE_SENTINEL"
+    headers["Content-Type"] = "text/html"
+
+    class Reader:
+        def open(self, path, timeout):
+            requests.append(path)
+            raise HTTPError("https://PRIVATE_SENTINEL", 403, "PRIVATE_SENTINEL", headers, response)
+
+    monkeypatch.setattr("runpod_ci_broker.controller.RunPodResultReader", lambda *args: Reader())
+    result = controller.collect()
+    assert result["state"] == "REJECTED"
+    assert result["facts"]["pod_deleted_confirmed"]
+    assert not result["facts"]["results_saved"]
+    assert requests == ["/v1/manifest"] and response.closed
+    assert result["collector_proxy_environment"]["https_proxy_configured"] is True
+    sample = result["startup_diagnostics"]["samples"][0]
+    assert sample["result_port_configured"] is True
+    assert sample["pod_status"] == "RUNNING"
+    assert sample["worker_readiness"] == "unverified"
+    assert result["result_http_failures"][0]["header_hints"]["server_family"] == "cloudflare"
+    assert result["result_http_failures"][0]["response_origin"] == "unverified"
+    write_report(journal.read(), tmp_path / "report")
+    for name in ["summary.md", "report.json"]:
+        assert "PRIVATE_SENTINEL" not in (tmp_path / "report" / name).read_text()
+    assert "Startup observations" in (tmp_path / "report" / "summary.md").read_text()
+    controller.start(confirmed=True)
+    assert cloud.creates == 1
+
+
 def test_result_403_preserves_diagnostics_without_retry_or_second_create(
     setup, monkeypatch, tmp_path
 ):

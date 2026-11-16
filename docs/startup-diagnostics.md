@@ -38,11 +38,15 @@ evidence. No raw stream is printed or uploaded.
 
 ## Verification and limits
 
-309 tests pass, including a real loopback HTTP SSE stream that sends a partial
+310 tests pass, including a real loopback HTTP SSE stream that sends a partial
 record then stalls. Fault cases cover oversized/trickling/malformed logs, 302/401/
 403 responses, secret omission, ownership mismatch, deadline exhaustion, resumed
 diagnostic intent and deletion after a failed diagnostic. Ruff, strict mypy
-(24 modules), wheel and source distribution builds pass.
+(24 modules), wheel and source distribution builds pass. An additional integration
+test exercises the real collector/controller path with an injected HTTP 403 stream,
+then verifies stream closure, safe JSON/Markdown diagnostics, cleanup and no second
+create. Startup hints are persisted through existing journal writes without an
+additional write on each Pod observation.
 
 These are local/offline tests; neither the new log API nor new diagnostics have
 been exercised on a live Pod. The worker/image pins, workflow permissions,

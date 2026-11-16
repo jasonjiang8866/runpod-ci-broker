@@ -296,7 +296,6 @@ class Controller:
                         break  # unknown create stays unresolved, never retry POST
                     status = p.get("status")
                     record_startup(r, p, self.now())
-                    self.save(r)
                     rate = p.get("cost")
                     if (
                         isinstance(rate, bool)
