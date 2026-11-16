@@ -54,3 +54,20 @@ follows attempt six once it exists and can only collect or clean up.
 The regression must verify fresh CUDA work, authenticated readiness, downloaded
 file checksums, GitHub upload receipt and direct-404 plus two-inventory cleanup.
 It does not establish a root cause for the old 403 or validate model training.
+
+## Regression preflight finding
+
+[Run 43936964886](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43936964886)
+was blocked before creating anything: MIG, 3090 and 4090 had no eligible capacity;
+the only 5090 placement was the explicitly excluded prior refusal. Attempts stayed
+zero, create intent false, and no campaign reservation was made. Complete inventory
+reported no active Pods. This is not a paid GPU regression result.
+
+This exposed an overly broad rerun guard: a persisted catalog refusal prevented
+rechecking even though no POST or budget reservation had occurred. The sixth
+contract now allows at most two manual catalog rechecks only for this exact
+unspent state. It retains each complete preflight record and still requires the
+same verified predecessors, manual window and absence checks. Any reservation,
+create intent, Pod identity, other blocker or exhausted recheck allowance keeps
+the guard closed. Recovery cannot open a recheck. The total paid-create allowance
+remains one.

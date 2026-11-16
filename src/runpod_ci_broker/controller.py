@@ -136,8 +136,31 @@ class Controller:
         if not confirmed:
             raise ValueError("explicit_paid_confirmation_required")
         with self.j.lock():
-            if self.j.read() is not None:
-                return self.record()  # reruns NEVER issue a second POST, even after deletion
+            existing = self.j.read()
+            preflight_history = []
+            if existing is not None:
+                # A catalog-only refusal has not consumed the one paid attempt.
+                # Permit two manual rechecks, retaining every earlier observation.
+                if not (
+                    self.task.experiment_id == REGRESSION
+                    and not self.j.recovery
+                    and self.j.identity["event"] == "workflow_dispatch"
+                    and existing["config_fingerprint"] == self.task.fingerprint()
+                    and existing["state"] in {"PREFLIGHT_BLOCKED", "NO_CAPACITY"}
+                    and existing["blockers"] == ["no_eligible_candidate"]
+                    and existing["attempts"] == 0
+                    and existing["create_intent"] is False
+                    and existing["pod_id"] is None
+                    and existing["campaign"] is None
+                    and existing["selected"] is None
+                    and existing["collect_attempts"] == 0
+                    and len(existing.get("preflight_history", [])) < 2
+                ):
+                    return self.record()  # NEVER repeat a reserved or attempted create
+                preflight_history = [
+                    *existing.get("preflight_history", []),
+                    {k: v for k, v in existing.items() if k != "preflight_history"},
+                ]
             prior = original = history = None
             if self.task.experiment_id in {
                 DIAGNOSTIC_RETRY,
@@ -187,6 +210,8 @@ class Controller:
                 "name": "rcb-"
                 + hashlib.sha256((SCOPE + ":" + self.task.experiment_id).encode()).hexdigest()[:24],
             }
+            if preflight_history:
+                r["preflight_history"] = preflight_history
             self.save(r)
             if self.j.other_unresolved():
                 raise ProviderError("scope_has_unresolved_intent")
