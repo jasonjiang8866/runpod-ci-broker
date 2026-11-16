@@ -71,3 +71,36 @@ same verified predecessors, manual window and absence checks. Any reservation,
 create intent, Pod identity, other blocker or exhausted recheck allowance keeps
 the guard closed. Recovery cannot open a recheck. The total paid-create allowance
 remains one.
+
+## Verified regression outcome
+
+The first two manual entries (43936964886 and 43938023026) found no eligible
+capacity and created no Pod. Their complete records remain in the sixth record's
+`preflight_history`, with attempts zero and no reservation. The independent
+[read-only diagnostic](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43938425393)
+subsequently found MIG capacity under the existing minimum-CUDA condition, without
+changing admission rules.
+
+[Run 43938726780](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43938726780)
+then reached **ACCEPTED** from controller commit
+`0c23858d9cc342e900b6f2fac43d2ddb2e23a5d6`, using the same worker digest as the
+previous acceptance. It created exactly one RTX PRO 6000 Blackwell MIG 24GB Pod.
+A transient readiness 404 was followed by authenticated readiness; exactly one
+bundle collection verified a 4096-byte CUDA memory roundtrip, smoke metric 1,
+and worker exit code 0. The downloaded archive and its inner file hashes were
+independently checked against the manifest, task and GitHub upload receipt.
+
+Direct GET 404 plus two complete inventory checks confirmed deletion. Lifecycle
+from intent to confirmed deletion was 78.176 seconds at USD 0.69/hour, about
+**USD 0.015 estimated compute** (not an invoice). The two catalog-only entries
+incurred no GPU charge or additional campaign reservation. All five predecessor
+hashes remain unchanged; the retained total is USD 6.001002 / 3600 seconds.
+[Recovery 43939097647](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43939097647)
+completed successfully and did not create another Pod.
+
+PRs #18 and #19 passed GitHub tests and worker-image offline builds; 390 local
+tests, Ruff and strict mypy passed. The regression demonstrates repeatable GPU
+smoke, result transport and cleanup, including recovery from an unspent capacity
+preflight. Historical 403 attribution and model-training acceptance remain
+unverified. Public documentation retains this summary; complete downloaded
+artifacts are provided separately.
