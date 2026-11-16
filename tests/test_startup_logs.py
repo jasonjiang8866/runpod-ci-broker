@@ -69,6 +69,7 @@ def test_logs_fixed_endpoint_no_create_and_bounded_bytes(api, monkeypatch):
     request, timeout = calls[0]
     assert request.full_url == "https://api.runpod.io/v2/pods/abc123/logs?tail=100"
     assert request.get_method() == "GET" and timeout == 1
+    assert request.get_header("User-agent") == "runpod-ci-broker/0.1"
     assert result["status"] == "byte_limit" and response.closed
     assert "SECRET" not in json.dumps(result)
 

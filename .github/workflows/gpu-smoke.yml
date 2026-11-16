@@ -14,6 +14,10 @@ on:
         description: Approved UTC epoch seconds; must leave 600 to 3600 seconds at creation
         type: string
         default: ''
+      transport_retest:
+        description: One newly authorized transport retest after the definitive second create refusal
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -54,9 +58,14 @@ jobs:
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           RCB_DIAGNOSTIC_RETRY: ${{ inputs.diagnostic_retry }}
+          RCB_TRANSPORT_RETEST: ${{ inputs.transport_retest }}
           RCB_RETRY_WINDOW_END: ${{ inputs.retry_window_end }}
         run: |
-          if [ "$RCB_DIAGNOSTIC_RETRY" = "true" ]; then
+          if [ "$RCB_DIAGNOSTIC_RETRY" = "true" ] && [ "$RCB_TRANSPORT_RETEST" = "true" ]; then
+            exit 2
+          elif [ "$RCB_TRANSPORT_RETEST" = "true" ]; then
+            uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --transport-retest --retry-window-end "$RCB_RETRY_WINDOW_END"
+          elif [ "$RCB_DIAGNOSTIC_RETRY" = "true" ]; then
             uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --diagnostic-retry --retry-window-end "$RCB_RETRY_WINDOW_END"
           else
             uv run --locked python -m runpod_ci_broker.controller start --confirm-paid

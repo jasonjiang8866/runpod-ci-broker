@@ -13,7 +13,27 @@ from urllib.request import Request, build_opener
 from .cleanup import CleanupAPI
 from .provider import NoRedirect, ProviderError, bounded_body, http_error
 from .startup import summarize_logs
+from .transport_diagnostics import header_hints
 from .wire import Pod
+
+
+class CreateHTTPError(ProviderError):
+    """Preserve fixed HTTP observations without retaining the request or error body."""
+
+    def __init__(self, error: HTTPError):
+        definitive = error.code in {400, 401, 402, 403, 404, 422}
+        super().__init__(
+            http_error(error.code).code if definitive else "create_response_unknown",
+            ambiguous=not definitive,
+        )
+        self.diagnostic = {
+            "stage": "create",
+            "http_status": error.code,
+            "code": self.code,
+            "ambiguous": self.ambiguous,
+            "header_hints": header_hints(error.headers),
+            "response_origin": "unverified",
+        }
 
 
 class LiveAPI(CleanupAPI):
@@ -31,7 +51,11 @@ class LiveAPI(CleanupAPI):
             raise ValueError("startup_diagnostic_bounds")
         req = Request(
             f"https://api.runpod.io/v2/pods/{pod_id}/logs?tail=100",
-            headers={"Authorization": "Bearer " + str(self._key), "Accept": "text/event-stream"},
+            headers={
+                "Authorization": "Bearer " + str(self._key),
+                "Accept": "text/event-stream",
+                "User-Agent": "runpod-ci-broker/0.1",
+            },
         )
         deadline = time.monotonic() + timeout
         raw = bytearray()
@@ -97,6 +121,7 @@ class LiveAPI(CleanupAPI):
                 "Authorization": "Bearer " + str(self._key),
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "User-Agent": "runpod-ci-broker/0.1",
             },
         )
         try:
@@ -111,8 +136,10 @@ class LiveAPI(CleanupAPI):
             return pod_id
         except HTTPError as exc:
             # 5xx/timeout/429 may be a lost acknowledgement. Never POST again.
-            if exc.code in {400, 401, 402, 403, 404, 422}:
-                raise http_error(exc.code) from None
-            raise ProviderError("create_response_unknown", ambiguous=True) from None
+            try:
+                failure = CreateHTTPError(exc)
+            finally:
+                exc.close()  # Never read an error body that could echo Pod env or tokens.
+            raise failure from None
         except (URLError, OSError, ValueError, KeyError, TypeError):
             raise ProviderError("create_response_unknown", ambiguous=True) from None

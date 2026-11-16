@@ -1,5 +1,14 @@
 # One diagnostic successor for the unresolved HTTP 403
 
+**Executed update:** PR #12 was approved and merged. The one successor POST on
+2026-11-16 was refused before allocation (`invalid_request`, exact 400/422 status
+not retained). A subsequent complete inventory showed zero active Pods. The
+original 403 remains unresolved. See the [run evidence](evidence/smoke-43899066456.md).
+The proposal below records the contract used; it is not an unused retry allowance.
+Subsequent [cross-project investigation](evidence/http-client-comparison-20261117.md)
+found and corrected a missing explicit result-client User-Agent, with a matching
+SimplexLoRA precedent. This remains locally tested only and grants no further POST.
+
 ## Investigation findings — 2026-11-16
 
 PR [#10](https://github.com/jasonjiang8866/runpod-ci-broker/pull/10) and
@@ -25,14 +34,15 @@ matches the bounded diagnostic implementation. Cloudflare documents
 [`cf-mitigated: challenge`](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response/)
 as a challenge-page indicator. The collector now stores only a boolean hint for
 that value. Header absence does not exclude a WAF block; no original challenge
-response has been observed. No authentication, proxy, TLS or User-Agent changes
-are made. 401/403 still stop collection and enter cleanup.
+response has been observed. That diagnostic revision made no authentication,
+proxy, TLS or User-Agent changes. The later explicit project-header correction is
+documented above; 401/403 still stop collection and enter cleanup.
 
-## Reviewable launch contract — not yet authorized or executed
+## Approved launch contract — executed once on 2026-11-16
 
 The original five-hour continuous window ended on **2026-11-09 22:51:50.875960
 Asia/Singapore**. Existing USD 20 and cumulative 18,000-second caps remain; this
-proposal needs approval for a new bounded execution window, not a fresh budget.
+approval renewed only a bounded execution window, not the budget.
 
 | Item | Proposed value |
 |---|---|
@@ -87,6 +97,6 @@ actual recovery CLI was exercised with injected cloud clients. The real original
 ledger was also passed through the pure reservation calculation locally without
 writing to GitHub or calling Runpod.
 
-No new live Pod, supplier charge, current inventory observation, live log response
-or successful GPU result is claimed. The original 403 remains unresolved until
-new direct evidence is obtained.
+Those tests preceded execution. The later live create refusal and GET-only inventory
+are recorded in the linked evidence; no live log response or successful GPU result
+was obtained. The original 403 remains unresolved.

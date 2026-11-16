@@ -4,6 +4,7 @@ import json
 import secrets
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -187,7 +188,8 @@ def test_result_host_cannot_be_injected(pod):
         RunPodResultReader(pod, 8000, "a" * 64)
 
 
-def test_fixed_https_bearer_header_and_no_redirect_handler(monkeypatch):
+@pytest.mark.parametrize("path", ["/v1/manifest", "/v1/files/metrics.json"])
+def test_fixed_https_bearer_header_and_no_redirect_handler(monkeypatch, path):
     seen = []
 
     class Opener:
@@ -201,9 +203,51 @@ def test_fixed_https_bearer_header_and_no_redirect_handler(monkeypatch):
 
     monkeypatch.setattr("runpod_ci_broker.export.build_opener", opener)
     with pytest.raises(HTTPError):
-        RunPodResultReader("abc123", 8000, "a" * 64).open("/v1/manifest", 2)
-    assert seen[0].full_url == "https://abc123-8000.proxy.runpod.net/v1/manifest"
+        RunPodResultReader("abc123", 8000, "a" * 64).open(path, 2)
+    assert seen[0].full_url == "https://abc123-8000.proxy.runpod.net" + path
     assert "a" * 64 not in seen[0].full_url
+    assert seen[0].get_header("User-agent") == "runpod-ci-broker/0.1"
+    assert seen[0].get_header("Authorization") == "Bearer " + "a" * 64
+    assert seen[0].get_header("Accept-encoding") == "identity"
+
+
+def test_actual_result_reader_sends_project_identity_on_manifest_and_file(monkeypatch):
+    # Loopback checks the real urllib wire headers; it is not a RunPod proxy test.
+    monkeypatch.setenv("RUNPOD_API_KEY", "account-key-must-not-reach-worker")
+    token = secrets.token_hex(32)
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_GET(self):
+            seen.append((self.path, dict(self.headers)))
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    reader = RunPodResultReader("abc123", 8000, token)
+    # Only the test substitutes a local endpoint; production still constructs HTTPS.
+    reader.base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        for path in ["/v1/manifest", "/v1/files/metrics.json"]:
+            with reader.open(path, 2) as response:
+                assert response.read() == b"{}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(3)
+    assert [path for path, _ in seen] == ["/v1/manifest", "/v1/files/metrics.json"]
+    for _, headers in seen:
+        assert headers["User-Agent"] == "runpod-ci-broker/0.1"
+        assert headers["Authorization"] == "Bearer " + token
+        assert headers["Accept-Encoding"] == "identity"
+        assert "account-key-must-not-reach-worker" not in json.dumps(headers)
 
 
 def test_resume_verification_rechecks_provenance_and_manifest_file_size(tmp_path, task, bundle):

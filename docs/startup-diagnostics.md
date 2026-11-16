@@ -1,9 +1,22 @@
-# Startup / HTTP 403 investigation — 2026-11-16
+# Startup / HTTP 403 investigation
+
+**Latest:** the approved diagnostic successor was attempted after PR #12 merged.
+Creation was refused before any result request. A subsequent account inventory
+showed zero active Pods. See [execution evidence](evidence/smoke-43899066456.md).
+The [2026-11-17 project comparison](evidence/http-client-comparison-20261117.md)
+identified a missing explicit result-client User-Agent and SimplexLoRA's matching
+prior 403 correction. Broker now sends its project identity; 342 local tests pass.
+No cloud retest has occurred. The create refusal and worker readiness remain
+separate investigation items; no new attempt is enabled.
+The sections below retain the investigation/proposal history preceding that run.
+
+## Historical investigation and proposal — 2026-11-16
 
 Update: PR #10 and #11 are merged; both main-branch checks passed at
 `6e9b35a5553a8a06c76e59cc2b92811f27a5bcfe`. The investigation and executable
 [single successor proposal](diagnostic-retry.md) below preserve the original
-evidence and require a renewed execution window. No second Pod has been launched.
+evidence and required a renewed execution window. The successor create was later
+attempted as described above; it did not return a Pod ID.
 
 The first paid Pod was deleted before its raw response or startup logs were
 captured. Its precise HTTP 403 source cannot be reconstructed from the saved
@@ -17,7 +30,9 @@ the observed 403. No confirmed transport fix is claimed here.
   time, provider state, presence of runtime metadata, and whether `8000/http` is
   declared. Keep the first and latest 15 samples; never retain raw env or addresses.
 - Record only presence of proxy environment variables, never their values. Do not
-  bypass an environment proxy or change TLS, authentication, User-Agent or routing.
+  bypass an environment proxy or change TLS, authentication or routing. That
+  diagnostic revision left User-Agent unchanged; the later comparison above
+  documents the explicit project-header correction.
 - On HTTP failure, retain fixed header categories and presence flags. Never read
   the error body; close the response. Cloudflare/nginx hints are not authenticated
   evidence of the responder or cause. 401/403 remain non-retryable.
@@ -87,4 +102,4 @@ attempt. No persistent storage. Require fresh complete inventory, exact source a
 passing CI before any new create intent.
 
 If 403 recurs, preserve the new lossy diagnostics, verify deletion, and stop for
-analysis. Do not turn the refusal into repeated retries or change identity/routes.
+analysis. Do not turn the refusal into repeated retries, rotate identity or change routes.

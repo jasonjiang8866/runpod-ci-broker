@@ -55,7 +55,11 @@ class CleanupAPI:
         req = Request(
             "https://api.runpod.io/v2" + path,
             method="DELETE" if delete else "GET",
-            headers={"Authorization": "Bearer " + str(self._key), "Accept": "application/json"},
+            headers={
+                "Authorization": "Bearer " + str(self._key),
+                "Accept": "application/json",
+                "User-Agent": "runpod-ci-broker/0.1",
+            },
         )
         try:
             deadline = time.monotonic() + min(timeout, 5)
