@@ -22,6 +22,10 @@ on:
         description: One readiness repair attempt with the published immutable worker; keeps all prior reservations
         type: boolean
         default: false
+      capacity_fallback:
+        description: Final bounded repair after the verified capacity refusal; prefer MIG and exclude refused placement
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -50,12 +54,14 @@ jobs:
       - name: Verify anonymous pull of the reviewed image
         timeout-minutes: 3
         env:
+          RCB_CAPACITY_FALLBACK: ${{ inputs.capacity_fallback }}
           RCB_REPAIR: ${{ inputs.repair }}
           DOCKER_CONFIG: ${{ runner.temp }}/broker-anonymous-docker
         run: |
           set -euo pipefail
           config=examples/approved-broker-smoke.json
           if [ "$RCB_REPAIR" = "true" ]; then config=examples/repair-smoke.json; fi
+          if [ "$RCB_CAPACITY_FALLBACK" = "true" ]; then config=examples/capacity-fallback-smoke.json; fi
           image="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$config")"
           docker pull "$image"
           actual="$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
@@ -65,12 +71,16 @@ jobs:
         continue-on-error: true
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RCB_CAPACITY_FALLBACK: ${{ inputs.capacity_fallback }}
           RCB_REPAIR: ${{ inputs.repair }}
           RCB_DIAGNOSTIC_RETRY: ${{ inputs.diagnostic_retry }}
           RCB_TRANSPORT_RETEST: ${{ inputs.transport_retest }}
           RCB_RETRY_WINDOW_END: ${{ inputs.retry_window_end }}
         run: |
-          if [ "$RCB_REPAIR" = "true" ]; then
+          if [ "$RCB_CAPACITY_FALLBACK" = "true" ]; then
+            test "$RCB_REPAIR" != "true" && test "$RCB_DIAGNOSTIC_RETRY" != "true" && test "$RCB_TRANSPORT_RETEST" != "true" || exit 2
+            uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --capacity-fallback --retry-window-end "$RCB_RETRY_WINDOW_END"
+          elif [ "$RCB_REPAIR" = "true" ]; then
             test "$RCB_DIAGNOSTIC_RETRY" != "true" && test "$RCB_TRANSPORT_RETEST" != "true" || exit 2
             uv run --locked python -m runpod_ci_broker.controller start --confirm-paid --repair --retry-window-end "$RCB_RETRY_WINDOW_END"
           elif [ "$RCB_DIAGNOSTIC_RETRY" = "true" ] && [ "$RCB_TRANSPORT_RETEST" = "true" ]; then

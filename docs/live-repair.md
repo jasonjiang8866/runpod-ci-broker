@@ -45,3 +45,23 @@ this record and never creates. The second planned repair attempt, if needed,
 requires reviewing the fourth result before a separate pinned contract is added.
 Fresh eligible data centers for the selected GPU are all offered as placement
 preferences; actual hardware, price and identity still require runtime admission.
+
+## Observed fourth attempt and one final capacity fallback
+
+[Run 43930077665](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43930077665)
+verified anonymous pull and reached RunPod creation on 2026-11-17 Singapore time.
+HTTP 400 carried the exact documented no-instances capacity message. The safe
+reason classifier recorded `capacity`; no Pod ID or ambiguous intent remains.
+This is direct evidence of a placement refusal, not an API-key authentication error.
+The downloadable report artifact 14256259940 was SHA-256 verified:
+`28e307570117615581d1060aa028d1a4a28198074c4e02771f61bf26481cb8e1`.
+
+The catalog offered 5090 EU-RO-1 and MIG 24GB US-WA-1; fixed GPU preference chose
+the former. The 4090 had an overall LOW signal but no eligible data-center row.
+This exposes why repeating the same ranking repeatedly hits a stale placement.
+The fifth/final repair contract pins all four record hashes, requires the exact
+unambiguous capacity refusal, prefers the already-approved MIG slice and excludes
+the refused GPU/data-center pair. Two fresh complete scope inventories separated
+by at least five seconds precede its only POST. Unknown create/authentication
+failures never qualify. Cumulative reservations become USD 5.000835 / 3000 s,
+within USD 20 / 18000 s. This is the second and final new attempt in this repair.
