@@ -4,26 +4,25 @@ A small Python CLI for **bounded, explainable RunPod GPU experiments driven by
 GitHub Actions**. It separates experiment requirements from cloud placement,
 budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 
-**Current status: live lifecycle partially verified.** The first real RTX 3090
-allocation and ownership-checked deletion passed, but HTTP 403 blocked result
-collection: CUDA and worker output remain unverified. See the
-[live evidence](docs/evidence/smoke-42596594291.md) and
-[bounded diagnosis / next-attempt plan](docs/startup-diagnostics.md).
-Offline planning, simulation and GET-only preflight remain available. The separate
-[fixed-campaign controller](docs/live-controller.md) retains its one-attempt guard.
-The approved [single diagnostic successor](docs/diagnostic-retry.md) was attempted
-on November 16, but Pod creation was refused before 403 reproduction. A subsequent
-complete account inventory showed zero active Pods. See [run evidence](docs/evidence/smoke-43899066456.md).
-Both reservations remain recorded; reruns do not enable another create.
-The [comparison with three working GPU projects](docs/evidence/http-client-comparison-20261117.md)
-found a missing explicit result-client User-Agent and a matching prior SimplexLoRA
-403 fix. The header is now corrected and locally tested; live result retrieval
-remains unverified. Worker HTTP readiness is a separate follow-up.
-The user subsequently authorized a [single live transport retest](docs/transport-retest.md),
-retaining both prior records and reservations; its execution must be reported separately.
-Generic Pod creation and cleanup remain disabled in the default CLI.
-`--action run` refuses even a populated authorization record. Passing mock tests
-is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).
+**Current status: real GPU smoke accepted.** On 2026-11-17 Singapore time,
+[run 43931230068](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43931230068)
+verified a Blackwell MIG 24GB CUDA memory roundtrip, downloaded checksum-verified
+results, verified their GitHub upload receipt and confirmed Pod deletion. The
+[recovery re-entry](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43931669505)
+also passed. [Acceptance evidence and limits](docs/evidence/smoke-43931230068.md)
+record the outcome and cost accounting; original files remain in Actions artifacts.
+
+The blocker was confirmed capacity refusal despite an available catalog signal,
+with fixed ranking repeatedly preferring the failed placement. The repair retains
+error reasons, waits for authenticated worker readiness and permits one bounded
+alternate placement after that known refusal. The API key was unchanged.
+The historical 403's exact origin remains unproven. See the
+[repair record](docs/live-repair.md).
+
+This is a fixed CUDA driver memory smoke, not model training or a framework
+benchmark. Generic Pod creation remains disabled in the default CLI;
+`--action run` refuses even a populated authorization record. Historical campaign
+records and reservations are retained, and reruns never create another Pod.
 
 ## What it solves
 
@@ -117,8 +116,8 @@ flowchart TD
 `PREFLIGHT_BLOCKED`, `NO_CAPACITY`, `BUDGET_INSUFFICIENT`, `CREATE_UNKNOWN`,
 `RUN_FAILED`, `TIMED_OUT`, `COLLECTION_FAILED` and `CLEANUP_PENDING` are explicit
 states, not success labels. A task is `ACCEPTED` only after its success criteria,
-verified local export and confirmed cleanup all hold. In this release every
-accepted lifecycle is **mock evidence** and `gpu_verified` remains false.
+verified local export and confirmed cleanup all hold. The fixed live campaign has one independently verified GPU acceptance; simulator
+results remain **mock evidence** and cannot establish GPU verification.
 
 The journal binds experiment ID, config SHA256, original Actions run ID, resume
 run IDs, source SHA, fixed image and Pod ID. A reused experiment ID with different
@@ -254,25 +253,19 @@ jobs:
 
 ## Roadmap and evidence
 
-The first Broker smoke now has an approved **USD 20 / five-hour campaign ceiling**
-with USD 3/GPU-hour unit cap. [Worker, cleanup and activation gates](docs/approved-smoke.md)
-distinguish this authorization from execution: no paid Pod has been launched.
+The fixed campaign retains its **USD 20 / five-hour ceiling** and USD 3/GPU-hour
+unit cap. [Real acceptance](docs/evidence/smoke-43931230068.md) used one MIG slice
+for 108.78 seconds and confirmed deletion; all preceding reservations remain.
 
-1. **Merged MVP:** no-cost CLI, schema, planner, state machine/fakes, local tests,
-   workflows, three scenario templates and [current repository audit](docs/repository-audit.md).
-2. **Read-only:** use the reviewed manual workflow after merge and credential setup;
-   verify returned model IDs, prices, inventory and configured volume compatibility.
-   Authenticated CUDA comparison completed: exact 12.8 returned NONE; minimum
-   12.8 returned capacity for all four allowed models. No paid execution.
-   See [current results and limits](docs/evidence/preflight-42334557432.md) and
-   [the exact inputs and acceptance checks](docs/phase-2-plan.md).
-3. **GPU smoke preparation:** the real shared-state probe and public worker publication
-   succeeded. A fixed campaign controller now implements intent-before-create,
-   original-attempt handover, bounded export, upload-receipt verification and owned
-   cleanup, with injected fault tests. Review its two credential-bearing workflows
-   before live activation. The USD 20/five-hour allowance does not reset on retries.
-4. **Separate integration PR:** simplest smoke first; no business repository changes
-   are included. Strict numerical checks and hardware groups follow later.
+1. **Planning and simulation:** schema, deterministic selection, journal, recovery
+   and three scenario templates are available without credentials.
+2. **Live fixed smoke:** shared state, immutable publication, runtime CUDA admission,
+   readiness, result export, durable receipt and owned cleanup have passed.
+3. **Next integration:** package one business workload with its own immutable image,
+   result contract and bounded acceptance run. Existing business repositories and
+   generic live execution are not enabled by the fixed smoke result.
+4. **Later:** injected runner-loss recovery, strict numerical reproduction and
+   hardware benchmark groups with their own evidence.
 
 [Official API capability matrix](docs/api-capabilities.md) distinguishes documented
 fields from estimates, unavailable runtime facts and unverified live account capability.

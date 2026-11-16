@@ -65,3 +65,11 @@ the refused GPU/data-center pair. Two fresh complete scope inventories separated
 by at least five seconds precede its only POST. Unknown create/authentication
 failures never qualify. Cumulative reservations become USD 5.000835 / 3000 s,
 within USD 20 / 18000 s. This is the second and final new attempt in this repair.
+
+## Final outcome
+
+The fifth attempt [43931230068](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43931230068)
+reached **ACCEPTED** on MIG 24GB EUR-IS-2 with real CUDA verification, downloaded
+artifacts and confirmed deletion. Recovery re-entry 43931669505 succeeded without
+a new create. [Acceptance results, cost estimate and limitations](evidence/smoke-43931230068.md).
+All four predecessor records were rechecked unchanged. No further GPU was launched.

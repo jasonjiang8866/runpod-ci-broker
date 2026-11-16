@@ -1,3 +1,16 @@
+# Real GPU acceptance — 2026-11-17 Singapore
+
+**373 offline tests**, Ruff, strict mypy and Docker offline builds passed for the
+repair. [Live run 43931230068](evidence/smoke-43931230068.md) then reached ACCEPTED
+on RTX PRO 6000 Blackwell MIG 24GB: CUDA memory roundtrip, authenticated result
+export, checksum validation, upload receipt and verified Pod deletion all passed.
+Independent recovery re-entry 43931669505 also passed. The public summary records acceptance; original result files and receipts remain
+in the authenticated Actions artifacts. The API key was unchanged.
+
+This is a driver-level memory smoke, not framework training/performance validation.
+The entries below are historical checkpoints, superseded where this result adds
+live evidence. No additional paid attempt is enabled by this documentation update.
+
 # Fixed controller preparation — 2026-11-09
 
 267 offline tests pass, including 47 new controller/campaign/handover cases.
