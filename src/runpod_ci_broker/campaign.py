@@ -17,6 +17,8 @@ DIAGNOSTIC_RETRY = CAMPAIGN + "-diagnostic-2"
 TRANSPORT_RETEST = CAMPAIGN + "-transport-3"
 REPAIR = CAMPAIGN + "-repair-4"
 CAPACITY_FALLBACK = CAMPAIGN + "-repair-5"
+REGRESSION = CAMPAIGN + "-regression-6"
+ACCEPTED_RECORD_HASH = "f4e91e184557d401f425fd421cb68e9702d614ab34bd0146882521b692fb7e13"
 REPAIR_RECORD_HASH = "a27554e3184631ae5ed4678077561785e3d35fca8a7bfea2cd54c83b2f0b2b46"
 REPAIR_SOURCE = "567edcc32529ad017d13edbc154971aea4d9d624"
 REPAIR_IMAGE = (
@@ -42,13 +44,19 @@ def validate_task(task: Task) -> dict[str, Any]:
     b = estimate(task)
     if (
         task.experiment_id
-        not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR, CAPACITY_FALLBACK}
+        not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR, CAPACITY_FALLBACK, REGRESSION}
         or task.scope != SCOPE
         or task.repository != REPOSITORY
         or task.source_sha
-        != (REPAIR_SOURCE if task.experiment_id in {REPAIR, CAPACITY_FALLBACK} else SOURCE)
+        != (
+            REPAIR_SOURCE
+            if task.experiment_id in {REPAIR, CAPACITY_FALLBACK, REGRESSION}
+            else SOURCE
+        )
         or task.image
-        != (REPAIR_IMAGE if task.experiment_id in {REPAIR, CAPACITY_FALLBACK} else IMAGE)
+        != (
+            REPAIR_IMAGE if task.experiment_id in {REPAIR, CAPACITY_FALLBACK, REGRESSION} else IMAGE
+        )
         or task.strategy != "flexible_smoke"
         or task.entrypoint != ["broker-cuda-memory-smoke"]
         or set(task.gpu_allowlist) != CONSUMER | {MIG}
@@ -82,6 +90,7 @@ def validate_task(task: Task) -> dict[str, Any]:
             TRANSPORT_RETEST: SECOND_RESERVATION,
             REPAIR: 3.000501,
             CAPACITY_FALLBACK: 4.000668,
+            REGRESSION: 5.000835,
         }.get(task.experiment_id)
         or task.results.required_files != ["metrics.json", "worker.log", "environment.json"]
         or task.results.metric_min != {"gpu_memory_smoke_passed": 1.0}
@@ -235,6 +244,44 @@ def capacity_parent(history: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def regression_parent(history: dict[str, Any] | None) -> dict[str, Any]:
+    """One new regression, anchored to the accepted and cleaned fifth attempt."""
+    parent = capacity_parent(history)
+    assert history is not None
+    prior = history.get(CAPACITY_FALLBACK)
+    if prior is None or record_hash(prior) != ACCEPTED_RECORD_HASH:
+        raise ValueError("regression_predecessor_not_verified")
+    c = prior["campaign"]
+    if (
+        prior["state"] != "ACCEPTED"
+        or any(
+            prior["facts"].get(k) is not True
+            for k in (
+                "experiment_passed",
+                "pod_deleted_confirmed",
+                "results_saved",
+                "task_completed",
+            )
+        )
+        or prior.get("gpu_verified") is not True
+        or prior.get("worker_readiness") != "ready"
+        or prior.get("artifact_status") != "github_upload_receipt_verified"
+        or prior["cleanup_verification"] != "direct_404_and_complete_inventory_twice"
+        or c["predecessor"] != parent
+        or c["reserved_usd"] != 5.000835
+        or c["reserved_seconds"] != 3000
+    ):
+        raise ValueError("regression_predecessor_not_eligible")
+    return {
+        "experiment_id": CAPACITY_FALLBACK,
+        "record_sha256": record_hash(prior),
+        "reserved_usd": c["reserved_usd"],
+        "reserved_seconds": c["reserved_seconds"],
+        "aggregate_resource_seconds": c["aggregate_resource_seconds"],
+        "original_wall_deadline": c["wall_deadline"],
+    }
+
+
 def reserve(
     record: dict[str, Any],
     task: Task,
@@ -249,9 +296,17 @@ def reserve(
     if record.get("campaign") is not None or record.get("attempts", 0) != 0:
         raise ValueError("campaign_already_attempted")
     parent = None
-    if task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST, REPAIR, CAPACITY_FALLBACK}:
+    if task.experiment_id in {
+        DIAGNOSTIC_RETRY,
+        TRANSPORT_RETEST,
+        REPAIR,
+        CAPACITY_FALLBACK,
+        REGRESSION,
+    }:
         parent = (
-            capacity_parent(history)
+            regression_parent(history)
+            if task.experiment_id == REGRESSION
+            else capacity_parent(history)
             if task.experiment_id == CAPACITY_FALLBACK
             else repair_parent(history)
             if task.experiment_id == REPAIR
@@ -286,6 +341,7 @@ def reserve(
             TRANSPORT_RETEST: 3,
             REPAIR: 4,
             CAPACITY_FALLBACK: 5,
+            REGRESSION: 6,
         }[task.experiment_id]
         record["campaign"]["predecessor"] = parent
     record["attempts"] = 1
