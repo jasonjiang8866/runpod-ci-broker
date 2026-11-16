@@ -9,13 +9,14 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from .export import capability_valid, result_server
+from .export import capability_valid, result_payloads, result_server
 from .models import Model, Task
 from .storage import atomic_json
 
@@ -181,21 +182,40 @@ def main() -> int:
         token = os.environ.pop("RCB_RESULT_TOKEN", "")
         if not capability_valid(token) or not 1024 <= args.port <= 65535:
             raise ValueError("result_capability_or_port_invalid")
-        manifest, files = run_smoke(
-            task,
-            args.selected_gpu,
-            args.pod_id,
-            args.output,
-            Path("/opt/broker/SOURCE_SHA").read_text().strip(),
+        if task.limits.runtime_seconds is None:
+            raise ValueError("worker_runtime_required")
+        state: dict[str, Any] = {"phase": "starting", "payloads": {}}
+        server = result_server(
+            task, args.pod_id, None, {}, token, ("0.0.0.0", args.port), state=state
         )
-        server = result_server(task, args.pod_id, manifest, files, token, ("0.0.0.0", args.port))
         server.timeout = 1
-        deadline = time.monotonic() + task.limits.collect_seconds
+        exit_code = 2
+
+        def compute() -> None:
+            nonlocal exit_code
+            state["phase"] = "running"
+            try:
+                manifest, files = run_smoke(
+                    task,
+                    args.selected_gpu,
+                    args.pod_id,
+                    args.output,
+                    Path("/opt/broker/SOURCE_SHA").read_text().strip(),
+                )
+                payloads = result_payloads(task, args.pod_id, manifest, files)
+                exit_code = int(manifest["metrics"]["worker_exit_code"])
+                state.update(payloads=payloads, phase="ready")
+            except (ValueError, TypeError, OSError):
+                state["phase"] = "failed"
+                print('{"error":"worker_refused","gpu_verified":false}', flush=True)
+
+        deadline = time.monotonic() + task.limits.runtime_seconds + task.limits.collect_seconds
         with server:
+            threading.Thread(target=compute, daemon=True).start()
             while time.monotonic() < deadline:
                 server.handle_request()
         # Container exit is NOT a Pod deletion receipt. External controller must terminate.
-        return int(manifest["metrics"]["worker_exit_code"])
+        return exit_code
     except (ValueError, TypeError, OSError):
         print('{"error":"worker_refused","gpu_verified":false}')
         return 2

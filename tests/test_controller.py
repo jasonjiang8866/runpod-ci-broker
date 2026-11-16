@@ -628,7 +628,7 @@ def test_create_api_no_retry_and_sanitized_unknown(monkeypatch, status, ambiguou
 
 
 @pytest.mark.parametrize("status", [400, 422, 403, 500])
-def test_create_http_failure_survives_report_without_body_read_or_repost(
+def test_create_http_failure_survives_report_without_secret_or_repost(
     setup, monkeypatch, tmp_path, status
 ):
     from email.message import Message
@@ -642,7 +642,11 @@ def test_create_http_failure_survives_report_without_body_read_or_repost(
 
         read1 = read
 
-    body = Unreadable(b"PRIVATE_SENTINEL")
+    body = (
+        io.BytesIO(b'{"detail":"PRIVATE_SENTINEL"}')
+        if status in {400, 422}
+        else Unreadable(b"PRIVATE_SENTINEL")
+    )
     headers = Message()
     headers["Server"] = "cloudflare"
     headers["Content-Type"] = "application/json; secret=PRIVATE_SENTINEL"
