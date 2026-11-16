@@ -30,7 +30,7 @@ from .export import ResultHTTPError, RunPodResultReader, capability_valid, colle
 from .handover import ControllerJournal, GitHubEvidence, context
 from .ledger import GitHubContentsStore, LedgerError
 from .lifecycle import owner
-from .live import LiveAPI
+from .live import CreateHTTPError, LiveAPI
 from .models import Candidate, Task
 from .planner import plan
 from .provider import ProviderError, ReadOnlyRunPod
@@ -233,6 +233,8 @@ class Controller:
                 self.save(r, "STARTING")
             except ProviderError as exc:
                 r["errors"].append(exc.code)
+                if isinstance(exc, CreateHTTPError):
+                    r["create_http_failure"] = exc.diagnostic
                 if not exc.ambiguous:
                     r["create_intent"] = False
                     self.save(r, "PREFLIGHT_BLOCKED")

@@ -1,5 +1,10 @@
 # Startup / HTTP 403 investigation — 2026-11-16
 
+**Latest:** the approved diagnostic successor was attempted after PR #12 merged.
+Creation was refused before any result request. A subsequent account inventory
+showed zero active Pods. See [execution evidence](evidence/smoke-43899066456.md).
+The sections below retain the investigation/proposal history preceding that run.
+
 Update: PR #10 and #11 are merged; both main-branch checks passed at
 `6e9b35a5553a8a06c76e59cc2b92811f27a5bcfe`. The investigation and executable
 [single successor proposal](diagnostic-retry.md) below preserve the original

@@ -599,7 +599,10 @@ def test_fork_and_nonmain_context_refused(monkeypatch):
 
 @pytest.mark.parametrize(
     "status,ambiguous",
-    [(401, False), (403, False), (402, False), (422, False), (429, True), (500, True), (503, True)],
+    [
+        (400, False), (401, False), (403, False), (402, False), (422, False),
+        (302, True), (429, True), (500, True), (503, True),
+    ],
 )
 def test_create_api_no_retry_and_sanitized_unknown(monkeypatch, status, ambiguous):
     monkeypatch.setenv("RUNPOD_API_KEY", "account-secret")
@@ -615,6 +618,57 @@ def test_create_api_no_retry_and_sanitized_unknown(monkeypatch, status, ambiguou
         LiveAPI(allow_create=True).create({})
     assert error.value.ambiguous is ambiguous and len(calls) == 1
     assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("status", [400, 422, 403, 500])
+def test_create_http_failure_survives_report_without_body_read_or_repost(
+    setup, monkeypatch, tmp_path, status
+):
+    from email.message import Message
+
+    controller, cloud, journal = setup
+    monkeypatch.setenv("RUNPOD_API_KEY", "PRIVATE_SENTINEL")
+
+    class Unreadable(io.BytesIO):
+        def read(self, *args):
+            pytest.fail("create error body must never be read")
+
+        read1 = read
+
+    body = Unreadable(b"PRIVATE_SENTINEL")
+    headers = Message()
+    headers["Server"] = "cloudflare"
+    headers["Content-Type"] = "application/json; secret=PRIVATE_SENTINEL"
+    headers["CF-Ray"] = "PRIVATE_SENTINEL"
+    headers["Set-Cookie"] = "PRIVATE_SENTINEL"
+    calls = []
+
+    class Opener:
+        def open(self, request, **kwargs):
+            calls.append(request.method)
+            raise HTTPError("https://PRIVATE_SENTINEL", status, "PRIVATE_SENTINEL", headers, body)
+
+    monkeypatch.setattr("runpod_ci_broker.live.build_opener", lambda *args: Opener())
+    cloud.create = LiveAPI(allow_create=True).create
+    result = controller.start(confirmed=True)
+    assert result["state"] == ("CREATE_UNKNOWN" if status == 500 else "PREFLIGHT_BLOCKED")
+    assert result["create_intent"] is (status == 500)
+    assert result["pod_id"] is None
+    assert body.closed and calls == ["POST"]
+    failure = result["create_http_failure"]
+    assert failure["http_status"] == status and failure["stage"] == "create"
+    assert failure["ambiguous"] is (status == 500)
+    assert failure["header_hints"]["server_family"] == "cloudflare"
+    assert failure["response_origin"] == "unverified"
+    write_report(journal.read(), tmp_path / "report")
+    for name in ["report.json", "summary.md"]:
+        saved = (tmp_path / "report" / name).read_text()
+        assert "PRIVATE_SENTINEL" not in saved
+        assert f'"http_status": {status}' in saved
+    # Even a definitive rejection retains the once-only attempt reservation.
+    again = controller.start(confirmed=True)
+    assert again["campaign"] == result["campaign"]
+    assert calls == ["POST"] and not cloud.deletes
 
 
 def test_paid_and_recovery_workflows_have_no_pr_secret_path():
