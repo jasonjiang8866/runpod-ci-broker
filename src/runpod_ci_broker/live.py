@@ -13,7 +13,7 @@ from urllib.request import Request, build_opener
 from .cleanup import CleanupAPI
 from .provider import NoRedirect, ProviderError, bounded_body, http_error
 from .startup import summarize_logs
-from .transport_diagnostics import header_hints
+from .transport_diagnostics import create_reason, header_hints
 from .wire import Pod
 
 
@@ -34,6 +34,14 @@ class CreateHTTPError(ProviderError):
             "header_hints": header_hints(error.headers),
             "response_origin": "unverified",
         }
+        if error.code in {400, 422}:
+            try:
+                raw = bounded_body(error, 16_384, time.monotonic() + 1)
+                self.diagnostic.update(create_reason(raw))
+            except (OSError, ValueError):
+                self.diagnostic.update(
+                    reason_class="unclassified", reason_hints=["body_unavailable"]
+                )
 
 
 class LiveAPI(CleanupAPI):
@@ -139,7 +147,7 @@ class LiveAPI(CleanupAPI):
             try:
                 failure = CreateHTTPError(exc)
             finally:
-                exc.close()  # Never read an error body that could echo Pod env or tokens.
+                exc.close()  # Only fixed reason categories leave the bounded error reader.
             raise failure from None
         except (URLError, OSError, ValueError, KeyError, TypeError):
             raise ProviderError("create_response_unknown", ambiguous=True) from None

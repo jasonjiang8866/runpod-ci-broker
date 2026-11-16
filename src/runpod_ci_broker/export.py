@@ -70,7 +70,7 @@ class RunPodResultReader:
         self._token = token
 
     def open(self, path: str, timeout: float) -> AbstractContextManager[BinaryIO]:
-        if not re.fullmatch(r"/v1/(manifest|files/[A-Za-z0-9_./-]+)", path):
+        if not re.fullmatch(r"/v1/(status|manifest|files/[A-Za-z0-9_./-]+)", path):
             raise ValueError("result_path_invalid")
         if any(p in {".", ".."} for p in path.split("/")):
             raise ValueError("result_path_invalid")
@@ -86,6 +86,32 @@ class RunPodResultReader:
             AbstractContextManager[BinaryIO],
             build_opener(NoRedirect).open(request, timeout=timeout),
         )
+
+    def readiness(self, task: Task, pod_id: str, timeout: float) -> str:
+        try:
+            with self.open("/v1/status", min(timeout, 5)) as response:
+                raw = response.read(4097)
+            if len(raw) > 4096:
+                raise ValueError()
+            value = json.loads(raw)
+            phase = value["phase"]
+            if value != {
+                "phase": phase,
+                "pod_id": pod_id,
+                "source_sha": task.source_sha,
+                "config_fingerprint": task.fingerprint(),
+            } or phase not in {"starting", "running", "ready", "failed"}:
+                raise ValueError()
+            return str(phase)
+        except HTTPError as exc:
+            failure = ResultHTTPError(exc.code, "readiness")
+            failure.diagnostic["header_hints"] = header_hints(exc.headers)
+            exc.close()
+            raise failure from None
+        except (URLError, OSError):
+            raise ProviderError("readiness_unavailable", retryable=True) from None
+        except (ValueError, KeyError, TypeError):
+            raise ProviderError("readiness_identity_invalid") from None
 
 
 def collect_https(
@@ -186,21 +212,11 @@ def collect_https(
             shutil.rmtree(staging)
 
 
-def result_server(
-    task: Task,
-    pod_id: str,
-    manifest: dict[str, Any],
-    files: dict[str, bytes],
-    token: str,
-    address: tuple[str, int] = ("127.0.0.1", 0),
-) -> HTTPServer:
-    """Serve an immutable small bundle; bind 0.0.0.0 only behind reviewed TLS proxy.
-
-    Result auth only. Never offers a shell, arbitrary path, or management endpoint.
-    Callers own server lifetime; it does not keep a Pod alive or terminate it.
-    """
+def result_payloads(
+    task: Task, pod_id: str, manifest: dict[str, Any], files: dict[str, bytes]
+) -> dict[str, bytes]:
     validate_manifest(task, pod_id, manifest)
-    if not capability_valid(token) or sum(map(len, files.values())) > MAX_EXPORT:
+    if sum(map(len, files.values())) > MAX_EXPORT:
         raise ValueError("result_export_invalid")
     if set(files) != set(task.results.required_files):
         raise ValueError("result_file_set_mismatch")
@@ -215,6 +231,34 @@ def result_server(
             raise ValueError("result_checksum_mismatch")
         payloads["/v1/files/" + name] = bytes(data)
 
+    return payloads
+
+
+def result_server(
+    task: Task,
+    pod_id: str,
+    manifest: dict[str, Any] | None,
+    files: dict[str, bytes],
+    token: str,
+    address: tuple[str, int] = ("127.0.0.1", 0),
+    *,
+    state: dict[str, Any] | None = None,
+) -> HTTPServer:
+    """Serve an immutable small bundle; bind 0.0.0.0 only behind reviewed TLS proxy.
+
+    Result auth only. Never offers a shell, arbitrary path, or management endpoint.
+    Callers own server lifetime; it does not keep a Pod alive or terminate it.
+    """
+    if not capability_valid(token):
+        raise ValueError("result_export_invalid")
+    if state is None:
+        if manifest is None:
+            raise ValueError("manifest_required")
+        state = {"phase": "ready", "payloads": result_payloads(task, pod_id, manifest, files)}
+    elif manifest is not None or files or state != {"phase": "starting", "payloads": {}}:
+        raise ValueError("pending_result_state_invalid")
+    shared = state
+
     class Handler(BaseHTTPRequestHandler):
         def setup(self) -> None:
             super().setup()
@@ -228,7 +272,20 @@ def result_server(
             if not hmac.compare_digest(supplied.encode(), ("Bearer " + token).encode()):
                 self.send_error(401, "Unauthorized")
                 return
-            payload = payloads.get(self.path)
+            if self.path == "/v1/status":
+                payload = json.dumps(
+                    {
+                        "phase": shared["phase"],
+                        "pod_id": pod_id,
+                        "source_sha": task.source_sha,
+                        "config_fingerprint": task.fingerprint(),
+                    }
+                ).encode()
+            elif shared["phase"] != "ready":
+                self.send_error(503, "Worker not ready")
+                return
+            else:
+                payload = shared["payloads"].get(self.path)
             if payload is None:
                 self.send_error(404, "Not found")
                 return

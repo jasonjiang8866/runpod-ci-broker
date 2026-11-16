@@ -6,6 +6,7 @@ These helpers do no I/O and must not delay cleanup with diagnostic requests.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from email.message import Message
 from typing import Any
@@ -29,7 +30,14 @@ def header_hints(headers: Mapping[str, str] | Message | None) -> dict[str, str |
         if server in {"cloudflare", "nginx", "envoy"}
         else "other_or_missing",
         "media_type": media
-        if media in {"text/html", "text/plain", "application/json", "application/octet-stream"}
+        if media
+        in {
+            "text/html",
+            "text/plain",
+            "application/json",
+            "application/problem+json",
+            "application/octet-stream",
+        }
         else "other_or_missing",
         "cf_ray_present": "CF-Ray" in headers,
         "cf_challenge_hint": value("cf-mitigated") == "challenge",
@@ -37,6 +45,46 @@ def header_hints(headers: Mapping[str, str] | Message | None) -> dict[str, str |
         "location_present": "Location" in headers,
         "www_authenticate_present": "WWW-Authenticate" in headers,
     }
+
+
+def create_reason(raw: bytes) -> dict[str, Any]:
+    """Only fixed categories escape; never persist a provider message or echoed env."""
+    if len(raw) > 16_384:
+        return {"reason_class": "unclassified", "reason_hints": ["body_too_large"]}
+    try:
+        body = json.loads(raw)
+        detail = body.get("detail", "") if isinstance(body, dict) else ""
+    except (ValueError, UnicodeError):
+        detail = ""
+    if not isinstance(detail, str):
+        detail = ""
+    detail = " ".join(detail.lower().split())
+    capacity = detail == (
+        "there are no longer any instances available with the requested specifications. "
+        "please refresh and try again."
+    )
+    # Hints aid diagnosis only; substring matches NEVER authorize a retry.
+    hints = sorted(
+        {
+            label
+            for word, label in (
+                ("disk", "disk"),
+                ("image", "image"),
+                ("cuda", "cuda"),
+                ("entrypoint", "entrypoint"),
+                ("command", "command"),
+                ("mount", "mount"),
+                ("port", "port"),
+                ("balance", "balance"),
+                ("minimum", "minimum"),
+                ("maximum", "maximum"),
+                ("invalid", "invalid"),
+                ("mutually exclusive", "conflicting_fields"),
+            )
+            if word in detail
+        }
+    )
+    return {"reason_class": "capacity" if capacity else "unclassified", "reason_hints": hints}
 
 
 def proxy_environment(environ: Mapping[str, str]) -> dict[str, bool]:

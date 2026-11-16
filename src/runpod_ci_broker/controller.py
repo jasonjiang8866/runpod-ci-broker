@@ -358,6 +358,22 @@ class Controller:
                         != r["result_capability_sha256"]
                     ):
                         raise ProviderError("result_capability_unrecoverable")
+                    if self.task.experiment_id.startswith(CAMPAIGN + "-repair-"):
+                        left = r["campaign"]["collection_deadline"] - self.now()
+                        phase = RunPodResultReader(r["pod_id"], 8000, token).readiness(
+                            self.task, r["pod_id"], min(5, left)
+                        )
+                        r["worker_readiness"] = phase
+                        self.save(r)
+                        print("Worker phase: " + phase, flush=True)
+                        if phase == "failed":
+                            raise ProviderError("worker_refused")
+                        if phase != "ready":
+                            if self.now() >= r["campaign"]["first_intent_at"] + 300:
+                                self.save(r, "TIMED_OUT")
+                                break
+                            self.sleep(5)
+                            continue
                     if r["collect_attempts"] >= self.task.limits.max_collect_attempts:
                         self.save(r, "COLLECTION_FAILED")
                         break
