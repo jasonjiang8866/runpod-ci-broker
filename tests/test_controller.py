@@ -742,6 +742,7 @@ def test_live_create_success_and_malformed_response_are_distinct(monkeypatch):
         def open(self, request, **kwargs):
             assert request.method == "POST"
             assert request.full_url == "https://api.runpod.io/v2/pods"
+            assert request.get_header("User-agent") == "runpod-ci-broker/0.1"
             return Response(bodies.pop(0))
 
     monkeypatch.setattr("runpod_ci_broker.live.build_opener", lambda *a: Opener())
@@ -961,3 +962,143 @@ def test_retry_reserves_before_ambiguous_ledger_failure_without_post(retry_setup
     retry.start(confirmed=True, window_end=cloud.clock + 3600)
     assert cloud.creates == 1  # an uncertain checkpoint cannot cause a later POST
     assert original.read() == previous
+
+
+@pytest.fixture
+def retest_setup(retry_setup):
+    from runpod_ci_broker.campaign import TRANSPORT_RETEST
+
+    retry, cloud, original, first_record = retry_setup
+    create = cloud.create
+
+    def refused(body):
+        cloud.creates += 1
+        raise ProviderError("invalid_request")
+
+    cloud.create = refused
+    second_record = retry.start(confirmed=True, window_end=cloud.clock + 3600)
+    cloud.create = create
+    assert second_record["state"] == "PREFLIGHT_BLOCKED" and cloud.pod is None
+    cloud.clock += 4000
+    journal = ControllerJournal(
+        original.store, SCOPE, TRANSPORT_RETEST, {**IDENTITY, "run_id": "9012"}, lambda _: True
+    )
+    task = Task.model_validate_json(Path("examples/transport-retest-smoke.json").read_text())
+    retest = Controller(
+        task, journal, cloud, retry.snapshot, retry.output, now=cloud.now, sleep=cloud.sleep
+    )
+    return retest, cloud, original, retry.j, first_record, second_record
+
+
+def test_retest_retains_both_records_reservations_and_never_creates_fourth(retest_setup):
+    retest, cloud, original, second, first_record, second_record = retest_setup
+    result = retest.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 3
+    campaign = result["campaign"]
+    assert campaign["attempt_number"] == 3
+    assert campaign["reserved_usd"] == 3.000501 and campaign["reserved_seconds"] == 1800
+    assert campaign["estimated_elapsed_cost_usd"] == 2.000334
+    assert (
+        campaign["predecessor"]["record_sha256"]
+        == hashlib.sha256(
+            json.dumps(
+                second_record, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode()
+        ).hexdigest()
+    )
+    cloud.clock += 10
+    result = retest.collect()  # existing 403 fixture: cleanup must still run once
+    assert result["state"] == "REJECTED" and result["facts"]["pod_deleted_confirmed"]
+    assert result["campaign"]["estimated_elapsed_cost_usd"] >= 2.500334
+    retest.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 3
+    assert original.read() == first_record and second.read() == second_record
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("create_intent", True),
+        ("pod_id", "unresolved"),
+        ("state", "CREATE_UNKNOWN"),
+        ("errors", ["authentication_failed"]),
+        ("collect_attempts", 1),
+    ],
+)
+def test_retest_rejects_unresolved_or_unexpected_second_outcome(retest_setup, field, value):
+    retest, cloud, _, second, _, second_record = retest_setup
+    second_record[field] = value
+    with second.lock():
+        second.write(second_record)
+    with pytest.raises(ValueError, match="retest_parent_not_eligible"):
+        retest.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 2 and retest.j.read() is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["original_hash", "reservation", "time", "completion", "window", "recovery", "confirmation"],
+)
+def test_retest_requires_unchanged_chain_and_fresh_manual_authorization(retest_setup, change):
+    retest, cloud, original, second, first_record, second_record = retest_setup
+    if change == "original_hash":
+        first_record["events"].append({"unexpected": True})
+        with original.lock():
+            original.write(first_record)
+    elif change in {"reservation", "time"}:
+        field = "reserved_usd" if change == "reservation" else "reserved_seconds"
+        second_record["campaign"][field] -= 1
+        with second.lock():
+            second.write(second_record)
+    elif change == "completion":
+        retest.j.completed = lambda _: False
+    elif change == "recovery":
+        retest.j.recovery = True
+    with pytest.raises(ValueError):
+        retest.start(
+            confirmed=change != "confirmation",
+            window_end=cloud.clock + (599 if change == "window" else 3600),
+        )
+    assert cloud.creates == 2 and retest.j.read() is None
+
+
+def test_retest_lost_acknowledgement_cannot_issue_another_post(retest_setup):
+    retest, cloud, original, second, first_record, second_record = retest_setup
+    cloud.lost = True
+    assert retest.start(confirmed=True, window_end=cloud.clock + 3600)["state"] == "CREATE_UNKNOWN"
+    retest.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 3
+    assert retest.collect()["facts"]["pod_deleted_confirmed"]
+    assert original.read() == first_record and second.read() == second_record
+
+
+def test_recovery_cli_selects_third_record_without_create(retest_setup, monkeypatch):
+    import runpod_ci_broker.controller as module
+
+    retest, cloud, original, second, first_record, second_record = retest_setup
+    retest.start(confirmed=True, window_end=cloud.clock + 3600)
+    real_controller = Controller
+    monkeypatch.setattr(
+        module,
+        "context",
+        lambda: {
+            **IDENTITY,
+            "run_id": "3456",
+            "path": ".github/workflows/recover-smoke.yml",
+            "event": "workflow_run",
+        },
+    )
+    monkeypatch.setattr(module, "GitHubContentsStore", lambda _: original.store)
+    monkeypatch.setattr(module, "LiveAPI", lambda **kw: cloud)
+    monkeypatch.setattr(module, "ReadOnlyRunPod", lambda: retest)
+    monkeypatch.setattr(
+        module,
+        "Controller",
+        lambda task, journal, api, snapshot, output: real_controller(
+            task, journal, api, snapshot, retest.output, now=cloud.now, sleep=cloud.sleep
+        ),
+    )
+    monkeypatch.setattr("sys.argv", ["controller", "collect"])
+    assert module.main() == 2
+    assert cloud.creates == 3 and retest.j.read()["facts"]["pod_deleted_confirmed"]
+    assert original.read() == first_record and second.read() == second_record

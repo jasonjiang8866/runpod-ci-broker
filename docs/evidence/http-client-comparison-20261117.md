@@ -1,5 +1,10 @@
 # Result HTTP 403: comparison with working GPU projects
 
+Follow-up: the user subsequently authorized a [single paid retest](../transport-retest.md).
+Inspection of the separate live/cleanup adapters also found omitted client
+headers there; those now use the same project identity. The initial audit below
+predates that authorization and does not claim a successful live retest.
+
 Inspected on 2026-11-17 Singapore time (2026-11-16 UTC). This is a source and
 existing-run audit, plus a local transport correction. No new Pod was created.
 

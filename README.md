@@ -19,6 +19,8 @@ The [comparison with three working GPU projects](docs/evidence/http-client-compa
 found a missing explicit result-client User-Agent and a matching prior SimplexLoRA
 403 fix. The header is now corrected and locally tested; live result retrieval
 remains unverified. Worker HTTP readiness is a separate follow-up.
+The user subsequently authorized a [single live transport retest](docs/transport-retest.md),
+retaining both prior records and reservations; its execution must be reported separately.
 Generic Pod creation and cleanup remain disabled in the default CLI.
 `--action run` refuses even a populated authorization record. Passing mock tests
 is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).

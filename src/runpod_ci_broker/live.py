@@ -51,7 +51,11 @@ class LiveAPI(CleanupAPI):
             raise ValueError("startup_diagnostic_bounds")
         req = Request(
             f"https://api.runpod.io/v2/pods/{pod_id}/logs?tail=100",
-            headers={"Authorization": "Bearer " + str(self._key), "Accept": "text/event-stream"},
+            headers={
+                "Authorization": "Bearer " + str(self._key),
+                "Accept": "text/event-stream",
+                "User-Agent": "runpod-ci-broker/0.1",
+            },
         )
         deadline = time.monotonic() + timeout
         raw = bytearray()
@@ -117,6 +121,7 @@ class LiveAPI(CleanupAPI):
                 "Authorization": "Bearer " + str(self._key),
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "User-Agent": "runpod-ci-broker/0.1",
             },
         )
         try:

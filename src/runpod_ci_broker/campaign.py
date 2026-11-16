@@ -14,7 +14,9 @@ from .worker import CONSUMER, MIG
 REPOSITORY = "jasonjiang8866/runpod-ci-broker"
 CAMPAIGN = "broker-smoke-20261107"
 DIAGNOSTIC_RETRY = CAMPAIGN + "-diagnostic-2"
+TRANSPORT_RETEST = CAMPAIGN + "-transport-3"
 PRIOR_RESERVATION = 1.000167
+SECOND_RESERVATION = 2.000334
 SCOPE = "broker-central-smoke"
 SOURCE = "2e6fe6930c02fc2469079a1d8e64025562aff07f"
 IMAGE = (
@@ -26,7 +28,7 @@ IMAGE = (
 def validate_task(task: Task) -> dict[str, Any]:
     b = estimate(task)
     if (
-        task.experiment_id not in {CAMPAIGN, DIAGNOSTIC_RETRY}
+        task.experiment_id not in {CAMPAIGN, DIAGNOSTIC_RETRY, TRANSPORT_RETEST}
         or task.scope != SCOPE
         or task.repository != REPOSITORY
         or task.source_sha != SOURCE
@@ -58,7 +60,11 @@ def validate_task(task: Task) -> dict[str, Any]:
         or task.limits.max_queries > 4
         or task.limits.max_collect_attempts > 10
         or task.limits.prior_spend_usd
-        != (PRIOR_RESERVATION if task.experiment_id == DIAGNOSTIC_RETRY else 0)
+        != {
+            CAMPAIGN: 0,
+            DIAGNOSTIC_RETRY: PRIOR_RESERVATION,
+            TRANSPORT_RETEST: SECOND_RESERVATION,
+        }.get(task.experiment_id)
         or task.results.required_files != ["metrics.json", "worker.log", "environment.json"]
         or task.results.metric_min != {"gpu_memory_smoke_passed": 1.0}
         or task.results.metric_max != {"worker_exit_code": 0.0}
@@ -104,20 +110,68 @@ def retry_parent(prior: dict[str, Any] | None, task: Task) -> dict[str, Any]:
     }
 
 
+def retest_parent(
+    prior: dict[str, Any] | None, original: dict[str, Any] | None, task: Task
+) -> dict[str, Any]:
+    """One newly authorized retest after the known, definitive second create refusal."""
+    if prior is None:
+        raise ValueError("retest_requires_second_record")
+    second = Task.model_validate(prior["request"])
+    validate_task(second)
+    first = retry_parent(original, second)
+    c = prior["campaign"]
+    if (
+        second.experiment_id != DIAGNOSTIC_RETRY
+        or prior["config_fingerprint"] != second.fingerprint()
+        or prior["mode"] != "live"
+        or prior["attempts"] != 1
+        or prior["state"] != "PREFLIGHT_BLOCKED"
+        or prior["create_intent"] is not False
+        or prior["pod_id"] is not None
+        or prior["errors"] != ["invalid_request"]
+        or prior["collect_attempts"] != 0
+        or prior["cleanup_verification"] != "not_applicable"
+        or c["attempt_number"] != 2
+        or c["predecessor"] != first
+        or c["reserved_usd"] != SECOND_RESERVATION
+        or c["reserved_seconds"] != 1200
+        or c["aggregate_resource_seconds"] != first["aggregate_resource_seconds"]
+        or c["estimated_elapsed_cost_usd"] != PRIOR_RESERVATION
+        or task.experiment_id != TRANSPORT_RETEST
+        or task.limits.prior_spend_usd != SECOND_RESERVATION
+    ):
+        raise ValueError("retest_parent_not_eligible")
+    return {
+        "experiment_id": DIAGNOSTIC_RETRY,
+        "record_sha256": hashlib.sha256(
+            json.dumps(prior, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest(),
+        "reserved_usd": c["reserved_usd"],
+        "reserved_seconds": c["reserved_seconds"],
+        "aggregate_resource_seconds": c["aggregate_resource_seconds"],
+        "original_wall_deadline": c["wall_deadline"],
+    }
+
+
 def reserve(
     record: dict[str, Any],
     task: Task,
     now: float,
     *,
     prior: dict[str, Any] | None = None,
+    original: dict[str, Any] | None = None,
     window_end: float | None = None,
 ) -> None:
     b = validate_task(task)
     if record.get("campaign") is not None or record.get("attempts", 0) != 0:
         raise ValueError("campaign_already_attempted")
     parent = None
-    if task.experiment_id == DIAGNOSTIC_RETRY:
-        parent = retry_parent(prior, task)
+    if task.experiment_id in {DIAGNOSTIC_RETRY, TRANSPORT_RETEST}:
+        parent = (
+            retest_parent(prior, original, task)
+            if task.experiment_id == TRANSPORT_RETEST
+            else retry_parent(prior, task)
+        )
         if (
             window_end is None
             or not math.isfinite(window_end)
@@ -133,14 +187,14 @@ def reserve(
         "attempt_deadline": now + 600,
         "collection_deadline": now + 420,  # leaves 60s upload + 120s cleanup
         "reserved_usd": b["estimated_total_usd"],
-        "reserved_seconds": 1200 if parent else 600,
+        "reserved_seconds": parent["reserved_seconds"] + 600 if parent else 600,
         "aggregate_resource_seconds": parent["aggregate_resource_seconds"] if parent else 0.0,
-        "estimated_elapsed_cost_usd": PRIOR_RESERVATION if parent else 0.0,
+        "estimated_elapsed_cost_usd": task.limits.prior_spend_usd,
         "observed_max_hourly_compute_usd": None,
         "supplier_bill_usd": None,
     }
     if parent:
-        record["campaign"]["attempt_number"] = 2
+        record["campaign"]["attempt_number"] = 3 if task.experiment_id == TRANSPORT_RETEST else 2
         record["campaign"]["predecessor"] = parent
     record["attempts"] = 1
 

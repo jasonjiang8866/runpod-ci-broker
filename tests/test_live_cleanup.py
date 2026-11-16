@@ -163,6 +163,7 @@ def test_cleanup_http_error_sanitized(monkeypatch):
 
     class Opener:
         def open(self, *a, **kw):
+            assert a[0].get_header("User-agent") == "runpod-ci-broker/0.1"
             raise HTTPError("secret-url", 403, "secret-body", {}, io.BytesIO(b"secret"))
 
     monkeypatch.setattr("runpod_ci_broker.cleanup.build_opener", lambda *a: Opener())
