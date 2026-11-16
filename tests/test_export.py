@@ -9,7 +9,12 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from runpod_ci_broker.export import RunPodResultReader, collect_https, result_server
+from runpod_ci_broker.export import (
+    ResultHTTPError,
+    RunPodResultReader,
+    collect_https,
+    result_server,
+)
 from runpod_ci_broker.fake import FakeProvider
 from runpod_ci_broker.models import Task
 from runpod_ci_broker.provider import ProviderError
@@ -27,6 +32,34 @@ class BytesReader:
     def open(self, path, timeout):
         self.calls.append((path, timeout))
         return io.BytesIO(self.payloads[path])
+
+
+@pytest.mark.parametrize("stage", ["manifest", "file"])
+@pytest.mark.parametrize("status,retryable", [(401, False), (403, False), (404, True), (503, True)])
+def test_http_failure_records_only_safe_status_and_stage(
+    tmp_path, task, bundle, stage, status, retryable
+):
+    class FailingReader(BytesReader):
+        def open(self, path, timeout):
+            if stage == "manifest" or path.startswith("/v1/files/"):
+                raise HTTPError("https://example.invalid/SECRET", status, "SECRET", {}, None)
+            return super().open(path, timeout)
+
+    with pytest.raises(ResultHTTPError) as caught:
+        collect_https(
+            task,
+            "abc123",
+            FailingReader(*bundle),
+            tmp_path / "saved",
+            deadline=time.monotonic() + 5,
+        )
+    failure = caught.value
+    assert failure.retryable is retryable
+    assert failure.diagnostic["http_status"] == status
+    assert failure.diagnostic["stage"] == stage
+    assert failure.diagnostic["response_origin"] == "unverified"
+    assert "SECRET" not in json.dumps(vars(failure))
+    assert not (tmp_path / "saved").exists()
 
 
 @pytest.fixture

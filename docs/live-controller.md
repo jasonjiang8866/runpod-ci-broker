@@ -1,5 +1,11 @@
 # Fixed campaign controller: review before activation
 
+**2026-11-09 update:** PR #9 was approved and merged. The no-cost completion route
+passed; the first real Pod was created and its deletion verified, but result
+collection returned HTTP 403 and the experiment was rejected. See the
+[live evidence](evidence/smoke-42596594291.md). Historical preparation statements
+below describe the pre-activation review, not the latest execution outcome.
+
 Prepared for the already approved **USD 20 total / five-hour** Broker campaign.
 No paid resource was created while developing this change. Tests inject cloud
 responses; they are not live GPU evidence. PR merge and activation of the new

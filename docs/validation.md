@@ -114,3 +114,18 @@ GPU, one small CUDA allocation/matmul, environment manifest, checksum-verified
 artifacts, deliberate recovery case and verified termination. Choose exact GPU,
 image, region, seconds and an all-in cap from the then-current read-only quote;
 request explicit approval before any paid operation. No historical budget applies.
+# First live attempt (2026-11-09)
+
+[Evidence and limitations](evidence/smoke-42596594291.md): real RTX 3090 creation
+and deletion confirmation passed; HTTP 403 prevented result collection, so CUDA
+execution is unverified. Follow-up diagnostics: **276 offline tests**, Ruff,
+strict mypy and wheel/sdist build pass. No new paid attempt is enabled by this fix.
+
+## Startup diagnosis follow-up (2026-11-16)
+
+[Bounded diagnostics](startup-diagnostics.md) add response header categories,
+startup timeline, proxy-presence flags and one short ownership-checked log sample.
+**309 tests**, strict mypy (24 modules), Ruff and wheel/sdist builds pass locally.
+The SSE timeout path is exercised against a local HTTP server. Real RunPod log
+access and the 403 cause remain unverified; the original continuous wall deadline
+has expired and no second paid attempt is enabled.
