@@ -79,6 +79,7 @@ class RunPodResultReader:
             headers={
                 "Authorization": "Bearer " + self._token,
                 "Accept-Encoding": "identity",
+                "User-Agent": "runpod-ci-broker/0.1",
             },
         )
         return cast(

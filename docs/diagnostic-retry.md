@@ -5,6 +5,9 @@
 not retained). A subsequent complete inventory showed zero active Pods. The
 original 403 remains unresolved. See the [run evidence](evidence/smoke-43899066456.md).
 The proposal below records the contract used; it is not an unused retry allowance.
+Subsequent [cross-project investigation](evidence/http-client-comparison-20261117.md)
+found and corrected a missing explicit result-client User-Agent, with a matching
+SimplexLoRA precedent. This remains locally tested only and grants no further POST.
 
 ## Investigation findings — 2026-11-16
 
@@ -31,8 +34,9 @@ matches the bounded diagnostic implementation. Cloudflare documents
 [`cf-mitigated: challenge`](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/challenge-pages/detect-response/)
 as a challenge-page indicator. The collector now stores only a boolean hint for
 that value. Header absence does not exclude a WAF block; no original challenge
-response has been observed. No authentication, proxy, TLS or User-Agent changes
-are made. 401/403 still stop collection and enter cleanup.
+response has been observed. That diagnostic revision made no authentication,
+proxy, TLS or User-Agent changes. The later explicit project-header correction is
+documented above; 401/403 still stop collection and enter cleanup.
 
 ## Approved launch contract — executed once on 2026-11-16
 

@@ -15,6 +15,10 @@ The approved [single diagnostic successor](docs/diagnostic-retry.md) was attempt
 on November 16, but Pod creation was refused before 403 reproduction. A subsequent
 complete account inventory showed zero active Pods. See [run evidence](docs/evidence/smoke-43899066456.md).
 Both reservations remain recorded; reruns do not enable another create.
+The [comparison with three working GPU projects](docs/evidence/http-client-comparison-20261117.md)
+found a missing explicit result-client User-Agent and a matching prior SimplexLoRA
+403 fix. The header is now corrected and locally tested; live result retrieval
+remains unverified. Worker HTTP readiness is a separate follow-up.
 Generic Pod creation and cleanup remain disabled in the default CLI.
 `--action run` refuses even a populated authorization record. Passing mock tests
 is not evidence of a GPU run. See [delivery status](docs/validation.md) and the [phase-2 execution plan](docs/phase-2-plan.md).
