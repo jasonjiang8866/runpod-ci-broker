@@ -6,8 +6,9 @@ snapshots, feeds confirmed capacity refusals back into ranking, and completes th
 fixed CUDA memory smoke lifecycle. Its tests inject a fake cloud and SQLite journal;
 they do **not** demonstrate live rental success or improved availability.
 
-No credential-bearing CLI or workflow activates this API yet. The default `run`
-command remains disabled. The historical fixed campaigns use their existing
+`allocation_workflow` supplies a main-only manual entry and independent recovery.
+The release manifest must be enabled with a published image digest before paid
+creation. The default `run` command remains disabled. The historical campaigns use their existing
 controller and retain their original records, budgets and recovery rules.
 
 ## Admission and budget
@@ -20,7 +21,7 @@ are software gates; neither proves that a person approved spending. A trusted
 workflow must independently establish that authorization before activating them.
 
 This version accepts new experiment IDs/scopes in the central broker repository,
-but only the previously published repair image/source, fixed memory smoke
+but only a permit-bound immutable worker image/source, fixed memory smoke
 entrypoint, one GPU, runtime at most 60 seconds and the worker's existing GPU
 allowlist. It requires a minimum CUDA version of at least 12.8, fixed result files
 and gates, and no persistent volumes or registry credentials. Hard data-center
@@ -87,11 +88,12 @@ loss. The API itself is not a background reaper and cannot survive runner loss.
 
 Collection verifies hashes, task/source/image/Pod provenance, manifest gates and
 the observed CUDA device. Local export alone leaves `results_saved=false`.
-`receipt` requires GitHub artifact metadata with the matching original run, attempt
+`receipt` requires GitHub artifact metadata with the matching exporting run, attempt
 in the name (`allocation-bundle-RUN_ID-ATTEMPT`), controller SHA and upload digest.
-The trusted workflow must upload this exact verified bundle. A recovery workflow
-must retrieve the original artifact or preserve that provenance; it cannot claim
-an unrelated upload as the original receipt.
+The trusted workflow must upload this exact verified bundle. Recovery can export a
+newly collected verified bundle under its own run/attempt and SHA, after validating
+the original dispatch identity and completion. The original allocation identity
+remains unchanged; unrelated uploads cannot satisfy the receipt.
 
 Deletion requires exact attempt ownership, direct absence and two complete absent
 inventory observations. `ACCEPTED` requires a passing smoke, verified durable
@@ -113,9 +115,24 @@ receipt and deletion; crash/restart; stale/window/HTTP/attempt limits; cancellat
 wrong ownership; failed deletion and recovery handover. Existing offline CI runs
 these tests without cloud credentials.
 
-Next: add reviewed manual and independent recovery workflow integration, pin its
-controller version, verify artifact handover, and prepare a specific paid smoke
-with an explicit allowlist, budget, window and cleanup criteria. Keep the existing
-worker digest unless the worker changes. A real successful run would establish
+The manual `allocation-smoke.yml` and `recover-allocation.yml` share the historical
+campaign concurrency group. The reviewed `examples/allocation-smoke.json` carries
+all six prior reservations (USD 6.001002 / 3600 seconds) into the USD 20 / 18000-second
+campaign. Before starting, the wrapper checks the accepted sixth record's hash,
+all predecessor hashes and the previous controller's completed status. It never
+writes the historical scope. Three permitted attempts reserve an additional
+USD 2.000500 and 1800 lifecycle seconds; total retained reservation is USD 8.001502.
+The new manual execution window leaves 600–1800 seconds, and resumes preserve it.
+
+All listed eligible data centers are searched, with no task region restriction.
+An explicit capacity refusal cools that GPU/data-center pair for the whole
+600-second search window. GPU preference begins with 4090 and never substitutes
+an unapproved card. Exact IDs include the consumer GPUs, PRO 6000 Server,
+Workstation, Max-Q and MIG 1g.24gb/2g.48gb, as listed in the
+[official RunPod GPU table](https://github.com/runpod/docs/blob/main/references/gpu-types.mdx).
+Host CUDA is a numeric minimum of 12.8; runtime identity remains independently checked.
+
+Publish the expanded worker, pin its source SHA/digest and enable the manifest,
+then run the specific paid smoke and verify independent recovery. A successful run would establish
 this controller's lifecycle only. Real fallback needs an observed capacity refusal;
 improved rental success rates need a larger, comparable sample.

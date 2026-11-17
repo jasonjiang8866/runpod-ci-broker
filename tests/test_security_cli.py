@@ -73,7 +73,8 @@ def test_workflows_no_pr_secrets_and_actions_pinned():
             assert "secrets." not in text and "RUNPOD_API_KEY" not in text
         assert workflow["permissions"] == {"contents": "read"}
         for job in workflow["jobs"].values():
-            assert int(job["timeout-minutes"]) <= 15
+            limit = 25 if path.name in {"allocation-smoke.yml", "recover-allocation.yml"} else 15
+            assert int(job["timeout-minutes"]) <= limit
             for step in job["steps"]:
                 if "uses" in step:
                     assert re.search(r"@[a-f0-9]{40}$", step["uses"])

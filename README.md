@@ -10,7 +10,8 @@ The first adaptive finder is GET-only, with bounded polling and a ranked candida
 queue. Capacity feedback is integrated into the simulator and an opt-in path in
 the fixed live controller. A task-bound single-task controller now has offline
 coverage for capacity fallback under one budget and execution window, reconciliation,
-smoke export and verified cleanup. Its paid workflow activation is still pending.
+smoke export and verified cleanup. Manual launch and independent recovery workflows
+are implemented; the committed release manifest controls paid activation.
 [Resource discovery](docs/resource-discovery.md) and the
 [three-stage allocation/solver plan / 实施计划](docs/resource-allocation-plan.md)
 describe the implementation and acceptance gates.
@@ -109,8 +110,9 @@ allocation feedback, shared task queues and solver evaluation.
 The prepared `BoundedController` API uses this same planner, persists an independent
 intent for each allowed attempt, and reserves the full attempt budget before its
 first POST. Only an explicit, classified capacity rejection allows another attempt.
-It currently supports the published single-GPU CUDA memory smoke worker; arbitrary
-training and credential-bearing CLI/workflow activation are not implemented.
+It supports the single-GPU CUDA memory smoke worker, including PRO 6000 Server,
+Workstation, Max-Q and MIG 24/48GB alongside 3090/4090/5090. The reviewed manual
+workflow uses a digest-pinned release manifest; arbitrary training is not enabled.
 See [single-task allocation and recovery](docs/bounded-allocation.md) for its API,
 failure contract, offline evidence and remaining activation gates.
 

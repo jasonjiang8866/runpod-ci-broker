@@ -63,7 +63,7 @@ class Cloud:
         if path == "/pods":
             return {"pods": self.inventory(), "pagination": {"hasNextPage": False}}
         if path == "/catalog/datacenters":
-            return {"dataCenters": [{"id": f"DC-{i}"} for i in range(4)]}
+            return {"dataCenters": [{"id": f"DC-{i}"} for i in range(len(self.task.gpu_allowlist))]}
         raise AssertionError(path)
 
     def create(self, body):
@@ -572,3 +572,42 @@ def test_wrong_upload_receipt_cannot_claim_results_saved(allocation, monkeypatch
         c.receipt("123", "f" * 64, github)
     assert not c.j.read()["facts"]["results_saved"]
     assert c.cleanup()["facts"]["pod_deleted_confirmed"]
+
+
+def test_recovery_upload_receipt_binds_new_exporter_without_changing_intent(
+    allocation, monkeypatch
+):
+    c, cloud = allocation
+    c.start(confirmed=True)
+    github = export_fixture(c, cloud, monkeypatch)
+    identity = {
+        **IDENTITY,
+        "run_id": "2469",
+        "sha": "e" * 40,
+        "path": ".github/workflows/recover-allocation.yml",
+        "event": "workflow_run",
+    }
+    journal = ControllerJournal(
+        c.j.store, c.task.scope, c.task.experiment_id, identity, lambda _: True, recovery=True
+    )
+    recovery = BoundedController(
+        c.task, c.permit, journal, cloud, cloud.read, c.output, now=cloud.now, sleep=cloud.sleep
+    )
+    recovery.collect()
+    with pytest.raises(ValueError, match="receipt_unverified"):
+        recovery.receipt("123", "d" * 64, github)
+    monkeypatch.setattr(
+        github,
+        "get",
+        lambda _: {
+            "id": 123,
+            "expired": False,
+            "digest": "sha256:" + "d" * 64,
+            "name": "allocation-bundle-2469-1",
+            "workflow_run": {"id": 2469, "head_sha": "e" * 40},
+        },
+    )
+    recovery.receipt("123", "d" * 64, github)
+    r = recovery.cleanup()
+    assert r["state"] == "ACCEPTED" and r["actions_run_id"] == "2468"
+    assert r["artifact_receipt"]["run_id"] == "2469" and len(cloud.creates) == 1
