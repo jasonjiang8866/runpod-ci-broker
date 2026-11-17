@@ -64,6 +64,10 @@ def test_new_workflows_are_main_manual_only_and_share_legacy_mutex(monkeypatch):
         if name.startswith("recover"):
             assert "allocation_workflow start" not in text
             assert w["on"]["workflow_run"]["workflows"] == ["Bounded allocation GPU smoke"]
+            collect = next(
+                s for s in job["steps"] if "allocation_workflow collect" in s.get("run", "")
+            )
+            assert collect["if"] == "always() && github.event_name == 'workflow_run'"
         monkeypatch.setenv("GITHUB_REPOSITORY", entry.REPOSITORY)
         monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
         monkeypatch.setenv("GITHUB_SHA", "a" * 40)
@@ -77,6 +81,30 @@ def test_new_workflows_are_main_manual_only_and_share_legacy_mutex(monkeypatch):
     monkeypatch.setenv("GITHUB_REF", "refs/heads/feature")
     with pytest.raises(ValueError):
         context()
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (entry.LedgerError("ledger_permission_denied"), "ledger_permission_denied"),
+        (entry.ProviderError("result_not_ready"), "result_not_ready"),
+        (ValueError("secret_credentials"), "allocation_workflow_refused_or_failed"),
+        (
+            entry.LedgerError("unsafe response: token=secret"),
+            "allocation_workflow_refused_or_failed",
+        ),
+    ],
+)
+def test_cli_exposes_only_safe_fixed_error_codes(monkeypatch, capsys, error, expected):
+    import sys
+
+    def fail():
+        raise error
+
+    monkeypatch.setattr(sys, "argv", ["allocation", "cleanup"])
+    monkeypatch.setattr(entry, "context", fail)
+    assert entry.main() == 2
+    assert json.loads(capsys.readouterr().out)["error"] == expected
 
 
 def test_recovery_checks_exact_original_dispatch_before_any_cloud_use(monkeypatch, tmp_path):
