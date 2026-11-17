@@ -1,16 +1,18 @@
-"""Default dry-run; only explicit preflight reads the cloud; simulation is network-free."""
+"""Default dry-run; explicit preflight/discover read the cloud; simulation is network-free."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from .diagnostics import diagnose_cuda
+from .discovery import ResourceFinder, SearchHistory, SearchPolicy, rank_candidates
 from .fake import FakeProvider
 from .ledger import SharedJournal, SQLiteStore
 from .lifecycle import Engine
@@ -27,12 +29,18 @@ def main() -> int:
     parser.add_argument(
         "--action",
         default="dry-run",
-        choices=["dry-run", "preflight", "simulate", "run", "reconcile", "cleanup"],
+        choices=["dry-run", "preflight", "discover", "simulate", "run", "reconcile", "cleanup"],
     )
     parser.add_argument(
         "--diagnose-cuda",
         action="store_true",
         help="preflight only: compare exact, unfiltered and minimum CUDA reads; never admit from diagnostics",
+    )
+    parser.add_argument(
+        "--search-policy", type=Path, help="discovery or opt-in simulator ranking policy"
+    )
+    parser.add_argument(
+        "--search-history", type=Path, help="discovery only: task-bound capacity feedback"
     )
     parser.add_argument("--mock-catalog", type=Path)
     parser.add_argument("--faults", type=Path, help="fake fault counts, simulation only")
@@ -52,6 +60,15 @@ def main() -> int:
             raise ValueError("cuda_diagnostics_require_read_only_preflight")
         if args.shared_mock_ledger and args.action not in {"simulate", "reconcile", "cleanup"}:
             raise ValueError("shared_ledger_mock_only")
+        if args.search_policy and args.action not in {"discover", "simulate"}:
+            raise ValueError("search_policy_requires_discovery_or_simulation")
+        if args.search_history and args.action != "discover":
+            raise ValueError("search_history_requires_discovery")
+        search_policy = (
+            SearchPolicy.model_validate_json(args.search_policy.read_text())
+            if args.search_policy
+            else None
+        )
         task = Task.model_validate_json(args.config.read_text())
         candidates = (
             [Candidate.model_validate(c) for c in json.loads(args.mock_catalog.read_text())]
@@ -83,7 +100,29 @@ def main() -> int:
                 )
             )
             return 2
-        if args.action == "preflight":
+        if args.action == "discover":
+            if args.faults or args.authorization:
+                raise ValueError("discovery_is_read_only")
+            policy = search_policy or SearchPolicy()
+            history = (
+                SearchHistory.model_validate_json(args.search_history.read_text())
+                if args.search_history
+                else SearchHistory(config_fingerprint=task.fingerprint())
+            )
+            if args.mock_catalog:
+                record = rank_candidates(
+                    task, candidates, policy, history, time.time(), mode="mock"
+                )
+                record["state"] = "CANDIDATES_FOUND" if record["selected"] else "SEARCH_EXHAUSTED"
+                record["resource_search"] = {
+                    "policy": policy.model_dump(),
+                    "history": history.model_dump(),
+                    "mode": "mock",
+                    "http_requests": 0,
+                }
+            else:
+                record = ResourceFinder(task, policy, history).run()
+        elif args.action == "preflight":
             if args.mock_catalog or args.faults:
                 raise ValueError("cannot_mix_mock_and_read_only_evidence")
             try:
@@ -139,6 +178,7 @@ def main() -> int:
                 journal,
                 result_dir,
                 run_id=os.environ.get("GITHUB_RUN_ID", "local-mock"),
+                search_policy=search_policy,
             )
             if args.action == "simulate":
                 # Explicitly simulation-only. Cannot be passed to a live adapter.
@@ -169,6 +209,8 @@ def main() -> int:
         )
         if args.action == "dry-run":
             return 0
+        if args.action == "discover":
+            return 0 if record["state"] == "CANDIDATES_FOUND" else 2
         if args.action == "preflight":
             return 2 if record["blockers"] else 0
         return 0 if record.get("state") == "ACCEPTED" else 2

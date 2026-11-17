@@ -4,6 +4,12 @@ A small Python CLI for **bounded, explainable RunPod GPU experiments driven by
 GitHub Actions**. It separates experiment requirements from cloud placement,
 budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 
+**A core goal is to help users find rentable GPUs:** search across eligible models
+and data centers, explain tradeoffs, and learn from explicit capacity refusals.
+The first adaptive finder is GET-only, with bounded polling and a ranked candidate
+queue. Capacity feedback is integrated into the simulator; connecting that queue
+to a generic paid controller is the next milestone. [Resource discovery](docs/resource-discovery.md).
+
 **Current status: real GPU smoke accepted.** On 2026-11-17 Singapore time,
 [run 43931230068](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43931230068)
 verified a Blackwell MIG 24GB CUDA memory roundtrip, downloaded checksum-verified
@@ -11,6 +17,10 @@ results, verified their GitHub upload receipt and confirmed Pod deletion. The
 [recovery re-entry](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43931669505)
 also passed. [Acceptance evidence and limits](docs/evidence/smoke-43931230068.md)
 record the outcome and cost accounting; original files remain in Actions artifacts.
+
+A second [paid regression](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43938726780)
+also passed on 2026-11-17, including cleanup and recovery. See the
+[regression and investigation reflection](docs/gpu-regression-postmortem.md).
 
 The blocker was confirmed capacity refusal despite an available catalog signal,
 with fixed ranking repeatedly preferring the failed placement. The repair retains
@@ -26,7 +36,10 @@ records and reservations are retained, and reruns never create another Pod.
 
 ## What it solves
 
-- Filter hard constraints before ranking GPU preference and price; explain every rejection.
+- Search eligible GPU/data-center pairs by stock signal, preference or price;
+  retain alternatives, refresh with bounded backoff and explain every rejection.
+- Temporarily cool down an explicitly refused placement instead of repeating it
+  indefinitely; this feedback loop is currently opt-in in the simulator.
 - Keep numerical reproduction and hardware benchmark groups from silently changing GPUs.
 - Require an explicit task budget, GPU allowlist, runtime and non-compute reserves.
 - Persist create intent before allocation; reconcile an ambiguous response before doing anything else.
@@ -53,6 +66,32 @@ The first command defaults to dry-run. Reports are `report.json` and `summary.md
 The second simulates the lifecycle; **it does not execute the configured program**.
 Example metrics and prices are fictional fixtures, not benchmark findings or quotes.
 Without `--mock-catalog`, dry-run is strictly offline and marks availability unknown.
+
+## Adaptive resource discovery
+
+```bash
+# Rank fictional candidates without credentials or network access.
+uv run runpod-ci-broker --config examples/simplexlora-flexible.json \
+  --action discover --mock-catalog examples/mock-catalog.json --output out/search
+# Simulate a catalog/create capacity race and select another eligible placement.
+uv run runpod-ci-broker --config examples/simplexlora-flexible.json \
+  --action simulate --mock-catalog examples/mock-catalog.json \
+  --search-policy examples/resource-search-policy.json \
+  --faults examples/resource-search-capacity-race.json \
+  --state-dir .broker/search-demo --output out/search-demo
+```
+
+For real GET-only discovery, omit `--mock-catalog` and provide `RUNPOD_API_KEY`
+through the existing secret mechanism, or select `mode: discover` in the manual
+read-only workflow. Review task constraints and query limits first. Example task
+images, costs and programs remain fixtures; finding a candidate is not deployment
+validation or permission to rent it. Reports include the candidate queue, ranking
+reasons, exclusions, query timeline and quote expiry. Stock grades are **ordinal
+signals, not allocation probabilities or reservations**.
+
+Discovery preserves the GPU allowlist, CUDA/VRAM, cloud, region, volume, budget and
+benchmark restrictions. The generic `run` action remains disabled. See
+[policy, failure handling and next milestones](docs/resource-discovery.md).
 
 ```bash
 uv run pytest
@@ -116,7 +155,7 @@ flowchart TD
 `PREFLIGHT_BLOCKED`, `NO_CAPACITY`, `BUDGET_INSUFFICIENT`, `CREATE_UNKNOWN`,
 `RUN_FAILED`, `TIMED_OUT`, `COLLECTION_FAILED` and `CLEANUP_PENDING` are explicit
 states, not success labels. A task is `ACCEPTED` only after its success criteria,
-verified local export and confirmed cleanup all hold. The fixed live campaign has one independently verified GPU acceptance; simulator
+verified local export and confirmed cleanup all hold. The fixed live campaigns have two independently verified GPU acceptances; simulator
 results remain **mock evidence** and cannot establish GPU verification.
 
 The journal binds experiment ID, config SHA256, original Actions run ID, resume

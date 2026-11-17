@@ -46,7 +46,7 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
     ]
     for row in record.get("decisions", []):
         c = row["candidate"]
-        decision = ", ".join(row["reasons"]) or "eligible; preference then price ranking"
+        decision = ", ".join(row["reasons"]) or "eligible; see ranking below"
         # Report only controlled identifiers, escaping table separators/newlines.
         cells = [
             str(c["gpu_id"]),
@@ -58,6 +58,60 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
         ]
         cells = [s.replace("|", "\\|").replace("\n", " ") for s in cells]
         lines.append("| " + " | ".join(cells) + " |")
+    if "resource_search" in record:
+        search = record["resource_search"]
+        lines += [
+            "",
+            "## Resource search",
+            "",
+            "Objective: "
+            + search["policy"]["objective"]
+            + ". Stock grades are ordinal hints, not allocation probabilities.",
+            "Status: "
+            + record.get("state", "unverified")
+            + "; HTTP reads: "
+            + str(search.get("http_requests", "mock lifecycle"))
+            + ".",
+            "Selection reason: " + json.dumps(record.get("selection_reason")),
+            "Candidate quote expires at UTC epoch: "
+            + str(record.get("candidate_valid_until", "not a live quote"))
+            + ". Refresh inventory and recheck the budget before any create.",
+            "",
+            "| Order | GPU | Data center | Stock signal | USD/GPU-hour |",
+            "|---|---|---|---|---|",
+        ]
+        for index, item in enumerate(record.get("candidate_queue", [])[:20], 1):
+            c = item["candidate"]
+            cells = [
+                str(index),
+                c["gpu_id"],
+                c["data_center"],
+                item["availability_signal"],
+                str(c["hourly_usd"]),
+            ]
+            lines.append(
+                "| " + " | ".join(x.replace("|", "\\|").replace("\n", " ") for x in cells) + " |"
+            )
+        lines += [
+            "",
+            "| Query | Elapsed seconds | Selected GPU | Blockers | Next query seconds |",
+            "|---|---|---|---|---|",
+        ]
+        for item in search.get("rounds", []):
+            cells = [
+                str(item["round"]),
+                str(item["elapsed_seconds"]),
+                (item["selected"] or {}).get("gpu_id", "none"),
+                ", ".join(item["blockers"]) or "none",
+                str(item["next_query_in_seconds"]),
+            ]
+            lines.append(
+                "| " + " | ".join(x.replace("|", "\\|").replace("\n", " ") for x in cells) + " |"
+            )
+        lines += [
+            "",
+            "Search alone does not allocate compute. All candidates and cooling exclusions are retained in report.json.",
+        ]
     diagnostic = record.get("provider_observations", {}).get("cuda_diagnostics")
     if diagnostic:
         lines += [
