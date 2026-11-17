@@ -10,6 +10,7 @@ from typing import Any
 from .discovery import SearchHistory, SearchPolicy, capacity_feedback, rank_candidates
 from .fake import FakeProvider
 from .models import Authorization, Candidate, Task
+from .optimization import propose
 from .planner import authorize, plan, reasons
 from .provider import ProviderError, delay
 from .results import save_bundle, verify_saved
@@ -323,8 +324,10 @@ class Engine:
             report = rank_candidates(
                 self.task, candidates, self.search_policy, history, self.p.now(), mode="mock"
             )
-            for key in ("candidate_queue", "ranking", "selection_reason"):
-                self.r[key] = report[key]
+            propose(report)
+            for key in ("candidate_queue", "ranking", "selection_reason", "placement_plan"):
+                if key in report:
+                    self.r[key] = report[key]
         else:
             report = plan(self.task, candidates)
         self.r.setdefault("planning_history", []).append(

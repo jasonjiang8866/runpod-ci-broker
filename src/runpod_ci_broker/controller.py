@@ -29,13 +29,15 @@ from .campaign import (
     validate_task,
 )
 from .cleanup import CleanupClient, cleanup_owned
+from .discovery import SearchHistory, SearchPolicy, admit_snapshot, capacity_feedback
 from .export import ResultHTTPError, RunPodResultReader, capability_valid, collect_https
 from .handover import ControllerJournal, GitHubEvidence, context
 from .ledger import GitHubContentsStore, LedgerError
 from .lifecycle import owner
 from .live import CreateHTTPError, LiveAPI
 from .models import Candidate, Task
-from .planner import plan
+from .optimization import PlacementSolver, RankedFirstSolver
+from .planner import plan, reasons
 from .provider import ProviderError, ReadOnlyRunPod
 from .report import write_report
 from .results import validate_manifest, verify_saved
@@ -60,8 +62,13 @@ class Controller:
         *,
         now: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
+        search_policy: SearchPolicy | None = None,
+        solver: PlacementSolver | None = None,
     ):
         validate_task(task)
+        if solver is not None and search_policy is None:
+            raise ValueError("solver_requires_search_policy")
+        self.search_policy, self.solver = search_policy, solver
         self.task, self.j, self.api, self.snapshot, self.output = (
             task,
             journal,
@@ -129,6 +136,8 @@ class Controller:
         # dataCenterIds is a placement preference, not a hard-region reservation.
         # This campaign permits any catalog region; retain requested vs actual DC.
         r["selected"]["data_center"] = p["dataCenterId"]
+        if "allocation_observation" in r:
+            r["allocation_observation"]["actual_data_center"] = p["dataCenterId"]
         self.save(r)
         return p
 
@@ -139,6 +148,18 @@ class Controller:
             existing = self.j.read()
             preflight_history = []
             if existing is not None:
+                stored_search = existing.get("resource_search")
+                if self.search_policy is None and stored_search:
+                    self.search_policy = SearchPolicy.model_validate(stored_search["policy"])
+                if (
+                    self.search_policy is not None
+                    and existing.get("resource_search", {}).get("policy")
+                    != self.search_policy.model_dump()
+                ):
+                    raise ValueError("search_policy_changed_on_resume")
+                stored_solver = existing.get("placement_plan", {}).get("solver")
+                if stored_solver and stored_solver != (self.solver or RankedFirstSolver()).name:
+                    raise ValueError("solver_changed_on_resume")
                 # A catalog-only refusal has not consumed the one paid attempt.
                 # Permit two manual rechecks, retaining every earlier observation.
                 if not (
@@ -212,6 +233,17 @@ class Controller:
             }
             if preflight_history:
                 r["preflight_history"] = preflight_history
+            if self.search_policy:
+                r["resource_search"] = {
+                    "policy": self.search_policy.model_dump(),
+                    "history": SearchHistory(
+                        config_fingerprint=self.task.fingerprint()
+                    ).model_dump(),
+                    "mode": "live_controller",
+                    "search_started_at": self.now(),
+                    "snapshot_count": 0,
+                    "http_requests": None,
+                }
             self.save(r)
             if self.j.other_unresolved():
                 raise ProviderError("scope_has_unresolved_intent")
@@ -225,7 +257,21 @@ class Controller:
                         refused["data_center"],
                     ):
                         candidate.error = "prior_capacity_refusal"
-            r.update(plan(self.task, candidates, mode="live"))
+            if self.search_policy:
+                planning = admit_snapshot(
+                    self.task,
+                    candidates,
+                    inventory,
+                    self.search_policy,
+                    SearchHistory.model_validate(r["resource_search"]["history"]),
+                    self.now(),
+                    solver=self.solver,
+                )
+                planning["mode"] = "live"
+                r.update(planning)
+                r["resource_search"]["snapshot_count"] = 1
+            else:
+                r.update(plan(self.task, candidates, mode="live"))
             r["notice"] = (
                 "Live controller: Pod allocation, GPU verification, saved results and deletion "
                 "are separate facts. Catalog capacity is not a reservation."
@@ -264,6 +310,17 @@ class Controller:
             if self.task.experiment_id in {CAPACITY_FALLBACK, REGRESSION}:
                 r["predecessor_absence"] = "complete_scope_inventory_twice_before_create"
             selected = r["selected"]
+            if self.search_policy and (
+                self.now() >= r["candidate_valid_until"]
+                or reasons(self.task, Candidate.model_validate(selected))
+            ):
+                # The inventory check or solver may consume the quote's remaining life.
+                # No reservation or create is made from this expired proposal.
+                r["blockers"].append("precreate_proposal_expired_or_invalid")
+                r["selected"], r["candidate_queue"] = None, []
+                r["candidate_valid_until"], r["selection_reason"] = None, None
+                self.save(r, "PREFLIGHT_BLOCKED")
+                return r
             r["requested_allocation"] = dict(selected)
             reserve(
                 r,
@@ -290,6 +347,22 @@ class Controller:
             token = secrets.token_hex(32)
             r["result_capability_sha256"] = hashlib.sha256(token.encode()).hexdigest()
             r["create_intent"], r["paid_authorized"] = True, True
+            if self.search_policy:
+                r["allocation_observation"] = {
+                    "schema_version": 1,
+                    "requested_gpu": selected["gpu_id"],
+                    "requested_data_centers": preferred_centers,
+                    "quoted_gpu_hourly_usd": selected["hourly_usd"],
+                    "intent_at": self.now(),
+                    "request_started_at": None,
+                    "response_at": None,
+                    "request_elapsed_seconds": None,
+                    "search_to_acknowledgement_seconds": None,
+                    "outcome": "intent_recorded",
+                    "ready_after_intent_seconds": None,
+                    "actual_data_center": None,
+                    "supplier_bill_usd": None,
+                }
             body = {
                 "name": r["name"],
                 "image": self.task.image,
@@ -310,19 +383,65 @@ class Controller:
                 },
             }
             self.save(r, "CREATING")  # durable/read-back BEFORE POST; token stays private
+            if self.search_policy and self.now() >= min(
+                r["candidate_valid_until"], r["campaign"]["attempt_deadline"]
+            ):
+                # The original reservation remains consumed, but POST is known not sent.
+                r["create_intent"] = False
+                r["errors"].append("proposal_expired_before_post")
+                self.allocation_outcome(r, "not_sent")
+                self.save(r, "PREFLIGHT_BLOCKED")
+                return r
+            if self.search_policy:
+                r["allocation_observation"]["request_started_at"] = self.now()
             try:
                 r["pod_id"] = self.api.create(body)
+                self.allocation_outcome(r, "acknowledged")
                 self.save(r, "STARTING")
             except ProviderError as exc:
                 r["errors"].append(exc.code)
                 if isinstance(exc, CreateHTTPError):
                     r["create_http_failure"] = exc.diagnostic
+                capacity = (
+                    isinstance(exc, CreateHTTPError)
+                    and not exc.ambiguous
+                    and exc.diagnostic.get("http_status") in {400, 422}
+                    and exc.diagnostic.get("reason_class") == "capacity"
+                )
+                if self.search_policy and capacity:
+                    r["resource_search"]["history"] = capacity_feedback(
+                        self.task,
+                        Candidate.model_validate(selected),
+                        SearchHistory.model_validate(r["resource_search"]["history"]),
+                        exc,
+                        self.now(),
+                    ).model_dump()
+                self.allocation_outcome(
+                    r,
+                    "unknown" if exc.ambiguous else "capacity_refused" if capacity else "rejected",
+                )
                 if not exc.ambiguous:
                     r["create_intent"] = False
                     self.save(r, "PREFLIGHT_BLOCKED")
                 else:
                     self.save(r, "CREATE_UNKNOWN")
             return r
+
+    def allocation_outcome(self, r: dict[str, Any], outcome: str) -> None:
+        observation = r.get("allocation_observation")
+        if observation is not None:
+            at = self.now()
+            started = observation["request_started_at"]
+            observation.update(
+                outcome=outcome,
+                response_at=at,
+                request_elapsed_seconds=max(0.0, at - started) if started is not None else None,
+                search_to_acknowledgement_seconds=(
+                    max(0.0, at - r["resource_search"]["search_started_at"])
+                    if outcome == "acknowledged"
+                    else None
+                ),
+            )
 
     def collected(self, r: dict[str, Any], destination: Path) -> None:
         if not verify_saved(destination, self.task, r["pod_id"]):
@@ -439,6 +558,12 @@ class Controller:
                             self.task, r["pod_id"], min(5, left)
                         )
                         r["worker_readiness"] = phase
+                        if phase == "ready" and "allocation_observation" in r:
+                            measurement = r["allocation_observation"]
+                            if measurement["ready_after_intent_seconds"] is None:
+                                measurement["ready_after_intent_seconds"] = max(
+                                    0.0, self.now() - measurement["intent_at"]
+                                )
                         self.save(r)
                         print("Worker phase: " + phase, flush=True)
                         if phase == "failed":
@@ -544,6 +669,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["start", "collect", "receipt", "cleanup", "report"])
     parser.add_argument("--confirm-paid", action="store_true")
+    parser.add_argument("--search-policy", type=Path, help="start only: opt-in adaptive planning")
     attempt = parser.add_mutually_exclusive_group()
     attempt.add_argument("--diagnostic-retry", action="store_true")
     attempt.add_argument("--transport-retest", action="store_true")
@@ -556,6 +682,11 @@ def main() -> int:
     journal = None
     try:
         identity = context()
+        search_policy = None
+        if args.search_policy:
+            if args.action != "start":
+                raise ValueError("search_policy_start_only")
+            search_policy = SearchPolicy.model_validate_json(args.search_policy.read_text())
         recovery = identity["path"].endswith("recover-smoke.yml")
         if args.action == "start" and recovery:
             raise ValueError("recovery_never_creates")
@@ -623,9 +754,19 @@ def main() -> int:
                 allow_create=args.action == "start" and args.confirm_paid,
                 allow_termination=args.action in {"collect", "cleanup"},
             )
-        controller = (
-            Controller(task, journal, api, ReadOnlyRunPod().snapshot, output) if api else None
-        )
+        controller = None
+        if api:
+            if search_policy:
+                controller = Controller(
+                    task,
+                    journal,
+                    api,
+                    ReadOnlyRunPod().snapshot,
+                    output,
+                    search_policy=search_policy,
+                )
+            else:
+                controller = Controller(task, journal, api, ReadOnlyRunPod().snapshot, output)
         if args.action == "receipt":
             # Protocol object unused by receipt; no cloud credentials instantiated.
             controller = Controller(task, journal, None, lambda _: ([], {}), output)  # type: ignore[arg-type]

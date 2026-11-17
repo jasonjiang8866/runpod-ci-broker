@@ -7,8 +7,11 @@ budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 **A core goal is to help users find rentable GPUs:** search across eligible models
 and data centers, explain tradeoffs, and learn from explicit capacity refusals.
 The first adaptive finder is GET-only, with bounded polling and a ranked candidate
-queue. Capacity feedback is integrated into the simulator; connecting that queue
-to a generic paid controller is the next milestone. [Resource discovery](docs/resource-discovery.md).
+queue. Capacity feedback is integrated into the simulator and an opt-in path in
+the fixed live controller. A generic paid controller remains the next milestone.
+[Resource discovery](docs/resource-discovery.md) and the
+[three-stage allocation/solver plan / 实施计划](docs/resource-allocation-plan.md)
+describe the implementation and acceptance gates.
 
 **Current status: real GPU smoke accepted.** On 2026-11-17 Singapore time,
 [run 43931230068](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/43931230068)
@@ -92,6 +95,14 @@ signals, not allocation probabilities or reservations**.
 Discovery preserves the GPU allowlist, CUDA/VRAM, cloud, region, volume, budget and
 benchmark restrictions. The generic `run` action remains disabled. See
 [policy, failure handling and next milestones](docs/resource-discovery.md).
+
+The planner has a pure `PlacementSolver` interface and a `ranked-first-v1`
+baseline. Its proposals reference only admitted candidate IDs; the caller
+independently checks snapshot identity, assignment count and total reservation.
+The interface can represent multiple jobs, but current entrypoints submit one job
+and the baseline rejects batch problems. No MILP/constraint solver is installed.
+The [implementation plan](docs/resource-allocation-plan.md) separates real
+allocation feedback, shared task queues and solver evaluation.
 
 ```bash
 uv run pytest

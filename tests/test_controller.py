@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -12,11 +13,13 @@ import yaml
 
 from runpod_ci_broker.campaign import CAMPAIGN, SCOPE, may_collect, observe, reserve, validate_task
 from runpod_ci_broker.controller import Controller
+from runpod_ci_broker.discovery import SearchPolicy
 from runpod_ci_broker.export import ResultHTTPError
 from runpod_ci_broker.handover import ControllerJournal, GitHubEvidence, context
 from runpod_ci_broker.ledger import LedgerError, SQLiteStore
 from runpod_ci_broker.live import LiveAPI
 from runpod_ci_broker.models import Candidate, Task
+from runpod_ci_broker.optimization import Assignment, SolverResult
 from runpod_ci_broker.provider import ProviderError
 from runpod_ci_broker.report import write_report
 from runpod_ci_broker.results import save_bundle
@@ -1544,3 +1547,219 @@ def test_preflight_recheck_never_reopens_possible_create(regression_setup, field
     controller.snapshot = unexpected
     assert controller.start(confirmed=True, window_end=cloud.clock + 3600) == r
     assert cloud.creates == 6
+
+
+def adaptive(controller, cloud):
+    """Opt into the production controller planner using a complete fake snapshot."""
+    original = controller.snapshot
+
+    def snapshot(task):
+        candidates, observations = original(task)
+        observations.update(
+            observed_at=datetime.fromtimestamp(cloud.now(), UTC).isoformat(),
+            data_centers=[{"id": c.data_center} for c in candidates],
+            catalog_models=[
+                {
+                    "id": c.gpu_id,
+                    "data_centers": [
+                        {"id": c.data_center, "availability": "LOW" if i == 0 else "HIGH"}
+                    ],
+                }
+                for i, c in enumerate(candidates)
+            ],
+        )
+        return candidates, observations
+
+    controller.snapshot, controller.search_policy = snapshot, SearchPolicy()
+    return controller
+
+
+def test_adaptive_controller_uses_ranked_proposal_and_retains_original_reservation(setup):
+    controller, cloud, journal = setup
+    adaptive(controller, cloud)
+    original = cloud.create
+
+    def create(body):
+        cloud.sleep(2)
+        return original(body)
+
+    cloud.create = create
+    r = controller.start(confirmed=True)
+    assert r["state"] == "STARTING" and cloud.creates == 1
+    assert r["selected"]["gpu_id"] != controller.task.gpu_allowlist[0]
+    assert r["placement_plan"]["status"] == "feasible"
+    assert r["campaign"]["reserved_usd"] == 1.000167
+    assert r["allocation_observation"]["outcome"] == "acknowledged"
+    assert r["allocation_observation"]["request_elapsed_seconds"] == 2
+    assert r["allocation_observation"]["ready_after_intent_seconds"] is None
+    assert r["allocation_observation"]["supplier_bill_usd"] is None
+    cloud.pod["dataCenterId"] = "ANOTHER-DC"
+    with journal.lock():
+        controller.adopt(r)
+    observation = journal.read()["allocation_observation"]
+    assert observation["requested_data_centers"] == ["EU-RO-1"]
+    assert observation["actual_data_center"] == "ANOTHER-DC"
+    controller.search_policy = None
+    controller.start(confirmed=True)
+    assert controller.search_policy == SearchPolicy()
+    assert cloud.creates == 1
+    controller.search_policy = SearchPolicy(objective="price")
+    with pytest.raises(ValueError, match="policy_changed"):
+        controller.start(confirmed=True)
+
+
+@pytest.mark.parametrize("fault", ["foreign_option", "stale", "duplicate", "exception"])
+def test_controller_rejects_invalid_solver_before_reservation_and_post(setup, fault):
+    controller, cloud, _ = setup
+    adaptive(controller, cloud)
+
+    class Broken:
+        name = "broken-test"
+
+        def solve(self, problem, *, time_limit_ms):
+            if fault == "exception":
+                raise RuntimeError("PRIVATE_SENTINEL")
+            job = problem.jobs[0]
+            choice = Assignment(
+                job.key, "foreign" if fault == "foreign_option" else job.options[0].key
+            )
+            return SolverResult(
+                "stale" if fault == "stale" else problem.snapshot_id,
+                "feasible",
+                (choice, choice) if fault == "duplicate" else (choice,),
+            )
+
+    controller.solver = Broken()
+    r = controller.start(confirmed=True)
+    assert r["state"] == "PREFLIGHT_BLOCKED" and r["campaign"] is None
+    assert r["attempts"] == cloud.creates == 0 and not r["create_intent"]
+    assert "PRIVATE_SENTINEL" not in json.dumps(r)
+
+
+@pytest.mark.parametrize("when", ["snapshot", "inventory", "intent"])
+def test_adaptive_quote_expiry_never_posts_even_after_intent_write(setup, when):
+    controller, cloud, _ = setup
+    adaptive(controller, cloud)
+    if when == "snapshot":
+        original = controller.snapshot
+
+        def stale(task):
+            result = original(task)
+            cloud.sleep(31)
+            return result
+
+        controller.snapshot = stale
+    elif when == "inventory":
+        original_inventory = cloud.inventory
+
+        def slow_inventory():
+            cloud.sleep(31)
+            return original_inventory()
+
+        cloud.inventory = slow_inventory
+    else:
+        original_save = controller.save
+
+        def slow_save(record, state=None):
+            original_save(record, state)
+            if state == "CREATING":
+                cloud.sleep(31)
+
+        controller.save = slow_save
+    r = controller.start(confirmed=True)
+    assert r["state"] == "PREFLIGHT_BLOCKED" and cloud.creates == 0
+    assert r["create_intent"] is False
+    assert r["attempts"] == (1 if when == "intent" else 0)
+    if when == "intent":
+        assert r["campaign"]["reserved_usd"] == 1.000167
+        assert r["allocation_observation"]["outcome"] == "not_sent"
+
+
+@pytest.mark.parametrize(
+    "status,expected", [(400, "capacity_refused"), (403, "rejected"), (500, "unknown")]
+)
+def test_adaptive_create_feedback_is_persisted_without_extra_attempt(setup, status, expected):
+    from runpod_ci_broker.live import CreateHTTPError
+
+    controller, cloud, journal = setup
+    adaptive(controller, cloud)
+
+    def refuse(body):
+        cloud.creates += 1
+        raw = io.BytesIO(
+            b'{"detail":"There are no longer any instances available with the requested specifications. Please refresh and try again."}'
+        )
+        raise CreateHTTPError(
+            HTTPError("https://PRIVATE_SENTINEL", status, "PRIVATE_SENTINEL", {}, raw)
+        )
+
+    cloud.create = refuse
+    controller.start(confirmed=True)
+    r = journal.read()
+    assert r["allocation_observation"]["outcome"] == expected
+    assert len(r["resource_search"]["history"]["refusals"]) == (1 if status == 400 else 0)
+    assert r["create_intent"] is (status == 500)
+    controller.start(confirmed=True)
+    assert cloud.creates == 1 and r["attempts"] == 1
+    assert "PRIVATE_SENTINEL" not in json.dumps(r)
+
+
+def test_adaptive_lost_response_reconciles_existing_pod_without_replanning(setup):
+    controller, cloud, journal = setup
+    adaptive(controller, cloud)
+    cloud.lost = True
+    r = controller.start(confirmed=True)
+    assert r["state"] == "CREATE_UNKNOWN" and r["pod_id"] is None
+    assert r["allocation_observation"]["outcome"] == "unknown"
+    assert r["resource_search"]["history"]["refusals"] == []
+    controller.start(confirmed=True)
+    with journal.lock():
+        assert controller.adopt(r)["id"] == "abc123"
+    assert cloud.creates == 1
+    result = controller.cleanup()
+    assert result["facts"]["pod_deleted_confirmed"]
+
+
+def test_adaptive_readiness_measurement_is_distinct_from_create_ack(repair_setup, monkeypatch):
+    controller, cloud, _ = repair_setup
+    adaptive(controller, cloud)
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    phases = iter(["starting", "ready"])
+
+    class Reader:
+        def readiness(self, *args):
+            return next(phases)
+
+    monkeypatch.setattr("runpod_ci_broker.controller.RunPodResultReader", lambda *args: Reader())
+    r = controller.collect()
+    assert r["allocation_observation"]["ready_after_intent_seconds"] > 0
+    assert r["allocation_observation"]["request_elapsed_seconds"] == 0
+    assert r["facts"]["pod_deleted_confirmed"]
+
+
+def test_alternative_solver_runs_full_controller_acceptance_and_cleanup(repair_setup, monkeypatch):
+    controller, cloud, _ = repair_setup
+    adaptive(controller, cloud)
+
+    class PreferMIG:
+        name = "mig-test-v1"
+
+        def solve(self, problem, *, time_limit_ms):
+            job = problem.jobs[0]
+            option = next(option for option in job.options if "MIG" in option.gpu_id)
+            return SolverResult(problem.snapshot_id, "feasible", (Assignment(job.key, option.key),))
+
+    controller.solver = PreferMIG()
+    r = controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert "MIG" in r["selected"]["gpu_id"]
+    finish_mig_smoke(controller, monkeypatch)
+    r = controller.j.read()
+    assert r["state"] == "ACCEPTED" and all(r["facts"].values())
+    assert r["allocation_observation"]["outcome"] == "acknowledged"
+    assert r["allocation_observation"]["ready_after_intent_seconds"] is not None
+    assert cloud.pod is None and cloud.creates == 4
+    controller.start(confirmed=True, window_end=cloud.clock + 3600)
+    assert cloud.creates == 4
+    controller.solver = None
+    with pytest.raises(ValueError, match="solver_changed"):
+        controller.start(confirmed=True, window_end=cloud.clock + 3600)

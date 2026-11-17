@@ -17,6 +17,7 @@ from .fake import FakeProvider
 from .ledger import SharedJournal, SQLiteStore
 from .lifecycle import Engine
 from .models import Authorization, Candidate, Task
+from .optimization import propose
 from .planner import authorize, plan
 from .provider import ProviderError, ReadOnlyRunPod
 from .report import write_report
@@ -113,6 +114,7 @@ def main() -> int:
                 record = rank_candidates(
                     task, candidates, policy, history, time.time(), mode="mock"
                 )
+                propose(record)
                 record["state"] = "CANDIDATES_FOUND" if record["selected"] else "SEARCH_EXHAUSTED"
                 record["resource_search"] = {
                     "policy": policy.model_dump(),
