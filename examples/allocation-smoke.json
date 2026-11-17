@@ -1,11 +1,11 @@
 {
-  "enabled": false,
+  "enabled": true,
   "task": {
     "experiment_id": "broker-allocation-20261117",
     "scope": "broker-bounded-smoke",
     "repository": "jasonjiang8866/runpod-ci-broker",
-    "source_sha": "567edcc32529ad017d13edbc154971aea4d9d624",
-    "image": "ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:9226c6ae489e22f89f014cec7f2dfd80ebe1b9d661fcfe318807035c75f3ae03",
+    "source_sha": "615cf130685fea1ba02173c8b153b4f66388a4c3",
+    "image": "ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:968681add1078ad7ac9cd39d2887bd5b2948a9356c7eb1f2347af548d2d22291",
     "entrypoint": [
       "broker-cuda-memory-smoke"
     ],
