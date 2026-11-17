@@ -22,6 +22,12 @@ from .storage import atomic_json
 
 MIG = "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb"
 CONSUMER = {"NVIDIA GeForce RTX " + model for model in ("3090", "4090", "5090")}
+PRO = {
+    "NVIDIA RTX PRO 6000 Blackwell " + edition
+    for edition in ("Server Edition", "Workstation Edition", "Max-Q Workstation Edition")
+}
+MIG48 = "NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb"
+SUPPORTED_GPUS = CONSUMER | PRO | {MIG, MIG48}
 
 
 class Observation(Model):
@@ -39,7 +45,7 @@ class Observation(Model):
 
 def admit(task: Task, selected_gpu: str, observation: dict[str, Any]) -> None:
     """Host driver CUDA support is a floor, never mislabeled as toolkit version."""
-    if selected_gpu not in task.gpu_allowlist or selected_gpu not in CONSUMER | {MIG}:
+    if selected_gpu not in task.gpu_allowlist or selected_gpu not in SUPPORTED_GPUS:
         raise ValueError("gpu_not_allowed")
     if task.strategy != "flexible_smoke" or task.gpu_count != 1:
         raise ValueError("worker_supports_single_flexible_smoke_only")

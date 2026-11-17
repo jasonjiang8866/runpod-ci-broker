@@ -6,7 +6,7 @@ import pytest
 
 from runpod_ci_broker.cuda_probe import GPUProbeError, probe
 from runpod_ci_broker.models import Task
-from runpod_ci_broker.worker import MIG, admit, run_smoke
+from runpod_ci_broker.worker import MIG, SUPPORTED_GPUS, admit, run_smoke
 
 
 class FakeDriver:
@@ -163,3 +163,15 @@ def test_malformed_probe_never_echoes_arbitrary_output(tmp_path, smoke_task, mon
     )
     assert m["metrics"]["gpu_memory_smoke_passed"] == 0
     assert all(b"do-not-leak" not in data for data in files.values())
+
+
+@pytest.mark.parametrize("gpu", sorted(SUPPORTED_GPUS))
+def test_expanded_smoke_gpus_require_exact_runtime_identity(smoke_task, gpu):
+    smoke_task.gpu_preference = []
+    smoke_task.gpu_allowlist = [gpu]
+    obs = probe(FakeDriver())
+    obs.update(device_name=gpu, memory_bytes=96 * 1024**3, architecture="sm_120")
+    admit(smoke_task, gpu, obs)
+    obs["device_name"] = "NVIDIA RTX A6000"
+    with pytest.raises(ValueError, match="identity"):
+        admit(smoke_task, gpu, obs)

@@ -14,9 +14,9 @@ import secrets
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol, Self
+from typing import Annotated, Any, Protocol, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from .campaign import REPAIR_IMAGE, REPAIR_SOURCE, REPOSITORY, SCOPE
 from .cleanup import CleanupClient, cleanup_owned
@@ -30,7 +30,7 @@ from .optimization import PlacementSolver, RankedFirstSolver, digest, microusd
 from .planner import authorize, estimate, plan, reasons
 from .provider import ProviderError, ReadOnlyRunPod
 from .results import validate_manifest, verify_saved
-from .worker import CONSUMER, MIG, Observation, admit
+from .worker import SUPPORTED_GPUS, Observation, admit
 
 
 class ExecutionPermit(Model):
@@ -40,6 +40,11 @@ class ExecutionPermit(Model):
     controller_sha: Sha
     window_start: Nonnegative
     window_end: Positive
+    worker_source_sha: Sha = REPAIR_SOURCE
+    worker_image: Annotated[
+        str,
+        Field(pattern=r"^ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:[a-f0-9]{64}$"),
+    ] = REPAIR_IMAGE
 
     @model_validator(mode="after")
     def bounded_window(self) -> Self:
@@ -53,18 +58,18 @@ class AllocationClient(CleanupClient, Protocol):
     def create(self, body: dict[str, Any]) -> str: ...
 
 
-def validate_smoke(task: Task) -> None:
+def validate_smoke(task: Task, permit: ExecutionPermit) -> None:
     """General task IDs/budgets, but still the previously verified fixed worker."""
     if (
         task.scope == SCOPE
         or task.repository != REPOSITORY
         or task.data_centers
-        or task.image != REPAIR_IMAGE
-        or task.source_sha != REPAIR_SOURCE
+        or task.image != permit.worker_image
+        or task.source_sha != permit.worker_source_sha
         or task.entrypoint != ["broker-cuda-memory-smoke"]
         or task.strategy != "flexible_smoke"
         or task.gpu_count != 1
-        or not set(task.gpu_allowlist) <= CONSUMER | {MIG}
+        or not set(task.gpu_allowlist) <= SUPPORTED_GPUS
         or task.volume.kind != "none"
         or task.registry_credential_id is not None
         or task.compatibility.cuda_versions
@@ -117,11 +122,11 @@ class BoundedController:
         now: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
     ):
-        validate_smoke(task)
+        validate_smoke(task, permit)
         authorize(task, permit.authorization)
         if (journal.scope, journal.experiment_id) != (task.scope, task.experiment_id):
             raise ValueError("allocation_journal_mismatch")
-        if journal.identity["sha"] != permit.controller_sha:
+        if not journal.recovery and journal.identity["sha"] != permit.controller_sha:
             raise ValueError("allocation_controller_revision_mismatch")
         if (
             not re.fullmatch(r"[1-9][0-9]*", str(journal.identity["run_id"]))
@@ -708,15 +713,15 @@ class BoundedController:
                 or meta.get("expired") is not False
                 or meta.get("digest") != "sha256:" + sha256
                 or meta.get("name")
-                != f"allocation-bundle-{r['actions_run_id']}-{r['actions_run_attempt']}"
-                or meta.get("workflow_run", {}).get("id") != int(r["actions_run_id"])
-                or meta.get("workflow_run", {}).get("head_sha") != self.permit.controller_sha
+                != f"allocation-bundle-{self.j.identity['run_id']}-{self.j.identity['attempt']}"
+                or meta.get("workflow_run", {}).get("id") != int(self.j.identity["run_id"])
+                or meta.get("workflow_run", {}).get("head_sha") != self.j.identity["sha"]
             ):
                 raise ValueError("artifact_receipt_unverified")
             r["artifact_receipt"] = {
                 "id": int(artifact_id),
                 "sha256": sha256,
-                "run_id": r["actions_run_id"],
+                "run_id": self.j.identity["run_id"],
             }
             r["artifact_status"], r["facts"]["results_saved"] = (
                 "github_upload_receipt_verified",

@@ -16,7 +16,12 @@ from .campaign import REPOSITORY
 from .ledger import LedgerError, SharedJournal, Store
 from .provider import NoRedirect
 
-WORKFLOWS = {".github/workflows/gpu-smoke.yml", ".github/workflows/recover-smoke.yml"}
+WORKFLOWS = {
+    ".github/workflows/gpu-smoke.yml",
+    ".github/workflows/recover-smoke.yml",
+    ".github/workflows/allocation-smoke.yml",
+    ".github/workflows/recover-allocation.yml",
+}
 
 
 def context() -> dict[str, Any]:
@@ -37,7 +42,10 @@ def context() -> dict[str, Any]:
     event = os.environ.get("GITHUB_EVENT_NAME")
     if event not in {"workflow_dispatch", "workflow_run"}:
         raise LedgerError("trusted_controller_event_required")
-    if paths[0].endswith("gpu-smoke.yml") and event != "workflow_dispatch":
+    if (
+        paths[0].endswith(("gpu-smoke.yml", "allocation-smoke.yml"))
+        and event != "workflow_dispatch"
+    ):
         raise LedgerError("manual_launch_required")
     return {"run_id": run, "attempt": int(attempt), "sha": sha, "path": paths[0], "event": event}
 
