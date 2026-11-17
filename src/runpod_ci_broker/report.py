@@ -71,8 +71,8 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
             + record.get("state", "unverified")
             + "; HTTP reads: "
             + str(
-                search.get("http_requests")
-                if search.get("http_requests") is not None
+                record.get("allocation", search).get("http_requests")
+                if record.get("allocation", search).get("http_requests") is not None
                 else "unmeasured"
             )
             + ".",
@@ -128,6 +128,44 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
             ),
             "A feasible proposal still requires fresh inventory, budget reservation and durable create intent.",
         ]
+    if "allocation" in record:
+        allocation = record["allocation"]
+        lines += [
+            "",
+            "## Bounded allocation",
+            "",
+            (
+                f"Attempts consumed: {record['attempts']}; search rounds: {record['query_count']}; "
+                f"HTTP reads: {allocation['http_requests']}."
+            ),
+            (
+                f"Original execution window (UTC epoch): {allocation['permit']['window_start']} "
+                f"to {allocation['permit']['window_end']}."
+            ),
+            (
+                f"Reserved for all permitted attempts: {allocation['reserved_total_microusd']} micro-USD. "
+                "Resuming or switching candidates does not grant a new budget."
+            ),
+            (
+                f"Observed compute estimate (USD): {allocation['estimated_compute_usd']}; "
+                f"supplier bill (USD): {allocation['supplier_bill_usd']}."
+            ),
+            "",
+            "| Attempt | Outcome | GPU | Requested data center | Actual data center |",
+            "|---|---|---|---|---|",
+        ]
+        for attempt in record["attempt_log"]:
+            cells = [
+                str(attempt["number"]),
+                attempt["outcome"],
+                attempt["requested"]["gpu_id"],
+                attempt["requested"]["data_center"],
+                attempt["actual_data_center"] or "unobserved",
+            ]
+            lines.append(
+                "| " + " | ".join(x.replace("|", "\\|").replace("\n", " ") for x in cells) + " |"
+            )
+        lines += ["", "Capacity signals and offline tests do not establish a rental success rate."]
     if "allocation_observation" in record:
         observation = record["allocation_observation"]
         lines += [

@@ -8,7 +8,9 @@ budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 and data centers, explain tradeoffs, and learn from explicit capacity refusals.
 The first adaptive finder is GET-only, with bounded polling and a ranked candidate
 queue. Capacity feedback is integrated into the simulator and an opt-in path in
-the fixed live controller. A generic paid controller remains the next milestone.
+the fixed live controller. A task-bound single-task controller now has offline
+coverage for capacity fallback under one budget and execution window, reconciliation,
+smoke export and verified cleanup. Its paid workflow activation is still pending.
 [Resource discovery](docs/resource-discovery.md) and the
 [three-stage allocation/solver plan / 实施计划](docs/resource-allocation-plan.md)
 describe the implementation and acceptance gates.
@@ -103,6 +105,14 @@ The interface can represent multiple jobs, but current entrypoints submit one jo
 and the baseline rejects batch problems. No MILP/constraint solver is installed.
 The [implementation plan](docs/resource-allocation-plan.md) separates real
 allocation feedback, shared task queues and solver evaluation.
+
+The prepared `BoundedController` API uses this same planner, persists an independent
+intent for each allowed attempt, and reserves the full attempt budget before its
+first POST. Only an explicit, classified capacity rejection allows another attempt.
+It currently supports the published single-GPU CUDA memory smoke worker; arbitrary
+training and credential-bearing CLI/workflow activation are not implemented.
+See [single-task allocation and recovery](docs/bounded-allocation.md) for its API,
+failure contract, offline evidence and remaining activation gates.
 
 ```bash
 uv run pytest
