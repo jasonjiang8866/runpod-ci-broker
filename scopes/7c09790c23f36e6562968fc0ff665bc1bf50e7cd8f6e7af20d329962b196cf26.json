@@ -1,0 +1,1 @@
+{"controller":{"attempt":1,"event":"workflow_dispatch","path":".github/workflows/allocation-smoke.yml","run_id":"44109623354","sha":"c009961752248143418668ac6fb11cf9decd6a5c"},"holder":"b961f1d14b8e4548b9d6169399b77774","records":{},"revision":1,"schema":1,"scope":"broker-bounded-smoke"}
