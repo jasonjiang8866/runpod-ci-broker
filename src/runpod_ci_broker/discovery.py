@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import Field, model_validator
 
 from .models import Candidate, Identifier, Model, Nonnegative, Task
+from .optimization import PlacementSolver, propose
 from .planner import plan
 from .provider import ProviderError, ReadOnlyRunPod, Transport
 
@@ -171,6 +172,50 @@ def rank_candidates(
     return report
 
 
+def admit_snapshot(
+    task: Task,
+    candidates: list[Candidate],
+    observations: dict[str, Any],
+    policy: SearchPolicy,
+    history: SearchHistory,
+    now: float,
+    *,
+    solver: PlacementSolver | None = None,
+) -> dict[str, Any]:
+    """Shared discovery/controller admission. Only fresh complete reads reach a solver."""
+    report = rank_candidates(task, candidates, policy, history, now, observations=observations)
+    report["provider_observations"] = observations
+    report["planning_observed_at"] = observations.get("observed_at")
+    for field in ("query_status", "datacenter_status"):
+        if observations.get(field) != "ok":
+            report["blockers"].append(field + "_unverified")
+    if observations.get("inventory") != "complete":
+        report["blockers"].append("inventory_unverified")
+    if (
+        observations.get("inventory") == "complete"
+        and observations.get("scope_active_pod_count") != 0
+    ):
+        report["blockers"].append("scope_inventory_unverified_or_active")
+    if task.registry_credential_id:
+        report["blockers"].append("registry_access_unverified")
+    quote_valid_until = None
+    try:
+        observed = datetime.fromisoformat(observations.get("observed_at", ""))
+        if observed.tzinfo is None:
+            raise ValueError("timestamp_timezone_missing")
+        quote_valid_until = observed.timestamp() + policy.max_observation_age_seconds
+        if not 0 <= now - observed.timestamp() <= policy.max_observation_age_seconds:
+            report["blockers"].append("catalog_observation_stale")
+    except (ValueError, TypeError):
+        report["blockers"].append("catalog_timestamp_unverified")
+    if report["blockers"]:
+        report["selected"], report["candidate_queue"], report["selection_reason"] = None, [], None
+    else:
+        propose(report, solver)
+    report["candidate_valid_until"] = quote_valid_until if report["selected"] else None
+    return report
+
+
 class ResourceFinder:
     """One bounded search session. No result survives a stale/incomplete new snapshot."""
 
@@ -185,9 +230,11 @@ class ResourceFinder:
         wall_now: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = random.random,
+        solver: PlacementSolver | None = None,
     ):
         self.task, self.policy = task, policy or SearchPolicy()
         self.history = history or SearchHistory(config_fingerprint=task.fingerprint())
+        self.solver = solver
         self.get, self.now, self.wall_now, self.sleep, self.jitter = (
             get,
             now,
@@ -253,33 +300,15 @@ class ResourceFinder:
                 stop_reason = "search_deadline_reached"
                 break
             candidates, observations = provider.snapshot(query_task)
-            report = rank_candidates(
+            report = admit_snapshot(
                 self.task,
                 candidates,
+                observations,
                 policy,
                 self.history,
                 self.wall_now(),
-                observations=observations,
+                solver=self.solver,
             )
-            report["provider_observations"] = observations
-            for field in ("query_status", "datacenter_status"):
-                if observations.get(field) != "ok":
-                    report["blockers"].append(field + "_unverified")
-            if observations.get("inventory") != "complete":
-                report["blockers"].append("inventory_unverified")
-            if observations.get("scope_active_pod_count", 0):
-                report["blockers"].append("scope_active_pod")
-            quote_valid_until = None
-            try:
-                observed = datetime.fromisoformat(observations.get("observed_at", ""))
-                if observed.tzinfo is None:
-                    raise ValueError("timestamp_timezone_missing")
-                quote_valid_until = observed.timestamp() + policy.max_observation_age_seconds
-                age = self.wall_now() - observed.timestamp()
-                if not 0 <= age <= policy.max_observation_age_seconds:
-                    report["blockers"].append("catalog_observation_stale")
-            except (ValueError, TypeError):
-                report["blockers"].append("catalog_timestamp_unverified")
             if self.now() >= deadline:
                 terminal = "search_deadline_reached"
             if terminal:
@@ -287,7 +316,7 @@ class ResourceFinder:
             if report["blockers"]:
                 report["selected"], report["candidate_queue"] = None, []
                 report["selection_reason"] = None
-            report["candidate_valid_until"] = quote_valid_until if report["selected"] else None
+                report["candidate_valid_until"] = None
             item = {
                 "round": attempt,
                 "http_requests": calls,
@@ -306,7 +335,8 @@ class ResourceFinder:
             }
             if (
                 terminal
-                or "scope_active_pod" in report["blockers"]
+                or "scope_inventory_unverified_or_active" in report["blockers"]
+                or any(b.startswith("solver_") for b in report["blockers"])
                 or any(
                     isinstance(s, str) and ("invalid" in s or "incomplete" in s or "duplicate" in s)
                     for s in statuses

@@ -2,7 +2,8 @@
 
 Broker 的核心能力之一是提高用户在预算和兼容性要求内找到可租 GPU 的机会。
 库存目录显示可用只是候选信号；真正的容量拒绝应反馈到下一次选择，而不是
-反复选择同一卡型、同一机房。当前版本提供只读查找和模拟器反馈闭环，尚未
+反复选择同一卡型、同一机房。当前版本提供只读查找、模拟器反馈闭环及固定
+真实控制器的可选规划接入，尚未
 验证它对真实租卡成功率的提升，也尚未接入通用付费创建控制器。
 
 ## Current behavior
@@ -77,9 +78,14 @@ cost reservation. The policy and history are journaled; resuming adopts the stor
 policy and refuses a policy change. Existing simulations keep their old behavior
 unless this option is selected. Simulator evidence is always marked `mock`.
 
-The live finder only reads inventory. It does not automatically ingest the fixed
-paid campaign's failures, and that campaign does not yet consume this queue.
-Consequently this milestone does **not** establish better real allocation rates.
+The live finder only reads inventory. The fixed controller now accepts an opt-in
+`search_policy` (or `start --search-policy PATH`) and uses the same admission and
+planner interface on a fresh snapshot. It persists classified capacity feedback
+and allocation timing in its existing journal. Its original one-create contract
+still applies: feedback does not enable another paid attempt. Existing paid
+workflow inputs do not activate this option, and generic paid allocation is not
+enabled. Consequently this milestone does **not** establish better real allocation
+rates. See the [three-stage implementation plan](resource-allocation-plan.md).
 
 ## Validation and next integration
 

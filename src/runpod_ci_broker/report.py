@@ -70,7 +70,11 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
             "Status: "
             + record.get("state", "unverified")
             + "; HTTP reads: "
-            + str(search.get("http_requests", "mock lifecycle"))
+            + str(
+                search.get("http_requests")
+                if search.get("http_requests") is not None
+                else "unmeasured"
+            )
             + ".",
             "Selection reason: " + json.dumps(record.get("selection_reason")),
             "Candidate quote expires at UTC epoch: "
@@ -111,6 +115,32 @@ def write_report(record: dict[str, Any], destination: Path) -> None:
         lines += [
             "",
             "Search alone does not allocate compute. All candidates and cooling exclusions are retained in report.json.",
+        ]
+    if "placement_plan" in record:
+        proposal = record["placement_plan"]
+        lines += [
+            "",
+            "## Planner proposal",
+            "",
+            (
+                f"Solver: {proposal['solver']}; status: {proposal['status']}; "
+                f"elapsed: {proposal['elapsed_ms']} ms. Optimality: {proposal['optimality']}."
+            ),
+            "A feasible proposal still requires fresh inventory, budget reservation and durable create intent.",
+        ]
+    if "allocation_observation" in record:
+        observation = record["allocation_observation"]
+        lines += [
+            "",
+            "## Allocation observation",
+            "",
+            "Outcome: " + observation["outcome"],
+            "Request elapsed seconds: " + str(observation["request_elapsed_seconds"]),
+            "Search to acknowledgement seconds: "
+            + str(observation["search_to_acknowledgement_seconds"]),
+            "Authenticated readiness after intent seconds: "
+            + str(observation["ready_after_intent_seconds"]),
+            "One attempt is not a measured success rate. Acknowledgement does not establish worker readiness or acceptance.",
         ]
     diagnostic = record.get("provider_observations", {}).get("cuda_diagnostics")
     if diagnostic:

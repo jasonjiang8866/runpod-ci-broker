@@ -415,6 +415,22 @@ def test_transport_cannot_start_after_search_deadline(monkeypatch):
         Transport(deadline=9.0).get("/catalog/gpus", {})
 
 
+def test_solver_failure_stops_search_without_extra_api_reads(task, clock):
+    class Broken:
+        name = "broken-test"
+
+        def solve(self, problem, *, time_limit_ms):
+            raise RuntimeError("PRIVATE_SENTINEL")
+
+    c = Catalog(task)
+    search = finder(task, clock, c)
+    search.solver = Broken()
+    r = search.run()
+    assert r["state"] == "SEARCH_BLOCKED" and not r["candidate_queue"]
+    assert len(c.calls) == 3 and not clock.waits
+    assert "PRIVATE_SENTINEL" not in json.dumps(r)
+
+
 def test_default_preference_selects_4090_only_when_stock_is_equal(task, clock):
     task.gpu_preference = []
     equal = finder(task, clock, Catalog(task, [["HIGH", "HIGH"]])).run()
