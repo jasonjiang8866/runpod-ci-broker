@@ -136,3 +136,28 @@ Publish the expanded worker, pin its source SHA/digest and enable the manifest,
 then run the specific paid smoke and verify independent recovery. A successful run would establish
 this controller's lifecycle only. Real fallback needs an observed capacity refusal;
 improved rental success rates need a larger, comparable sample.
+
+## First live search and diversity continuation
+
+[Run 44109623354](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/44109623354)
+received three definitive capacity refusals: 4090/EU-RO-1, 5090/EU-RO-1 and
+4090/US-IL-1. No Pod was created. Independent recovery
+[44109871190](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/44109871190)
+passed. This exercised real capacity feedback but did not pass GPU acceptance.
+
+The remaining equally LOW stock candidates included untried PRO 6000 and MIG.
+The availability policy's preference tie-break could still concentrate attempts
+on recently refused models. Optional `diversify_after_refusal` now ranks recent
+model and center refusals before stock, price and preference. These are temporary
+exploration penalties, not allocation probabilities or new hard exclusions.
+Other valid placements of a refused model remain eligible. Without active feedback,
+or when this option is disabled, the prior ordering is retained.
+
+The reviewed continuation `broker-allocation-20261117-diverse` verifies the first
+search's immutable record hash, completed controller, exactly three definitive
+refusals, no Pod/unknown intent and retained USD 8.001502 reservation. It imports
+those actual refusals into the new task's history, retains the exact original
+UTC deadline **1794929408** (2026-11-17 23:30:08 Singapore), and permits at most
+three further attempts. No counters or reservations in the first record are reset.
+The total conservative reservation is USD 10.002002 / 7200 seconds, within the
+original USD 20 / 18000-second campaign. The unchanged published worker is reused.

@@ -119,6 +119,7 @@ class BoundedController:
         *,
         policy: SearchPolicy | None = None,
         solver: PlacementSolver | None = None,
+        initial_history: SearchHistory | None = None,
         now: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -139,6 +140,10 @@ class BoundedController:
         self.policy = (policy or SearchPolicy()).model_copy(deep=True)
         self.solver, self.now, self.sleep = solver or RankedFirstSolver(), now, sleep
         self.cost = estimate(self.task)
+        self.initial_history = initial_history or SearchHistory(
+            config_fingerprint=task.fingerprint()
+        )
+        self.initial_history.validate_for(self.task, self.now())
 
     def save(self, r: dict[str, Any], state: str | None = None) -> None:
         if state and state != r["state"]:
@@ -249,7 +254,7 @@ class BoundedController:
             "resource_search": {
                 "policy": self.policy.model_dump(),
                 "mode": "live_controller",
-                "history": SearchHistory(config_fingerprint=self.task.fingerprint()).model_dump(),
+                "history": self.initial_history.model_dump(),
                 "rounds": [],
             },
         }

@@ -496,3 +496,29 @@ def test_stale_snapshot_then_failed_refresh_never_reuses_old_candidates(task, cl
     assert clock.waits == [5]
     assert "catalog_observation_stale" in r["resource_search"]["rounds"][0]["blockers"]
     assert r["resource_search"]["stop_reason"] == "permission_denied"
+
+
+def test_optional_diversification_explores_other_models_without_excluding_valid_fallback(
+    task, candidates
+):
+    first = candidates[0]
+    same_gpu = first.model_copy(update={"data_center": "NEW-DC"})
+    other = candidates[1].model_copy(update={"data_center": "OTHER-DC"})
+    history = capacity_feedback(
+        task,
+        first,
+        SearchHistory(config_fingerprint=task.fingerprint()),
+        ProviderError("no_capacity"),
+        100.0,
+        mode="mock",
+    )
+    policy = SearchPolicy(diversify_after_refusal=True)
+    r = rank_candidates(task, [first, same_gpu, other], policy, history, 101.0, mode="mock")
+    assert r["selected"] == other.model_dump()
+    assert same_gpu.model_dump() in [x["candidate"] for x in r["candidate_queue"]]
+    assert r["selection_reason"]["recent_gpu_refusals"] == 0
+    expensive = other.model_copy(update={"hourly_usd": 100.0})
+    r = rank_candidates(task, [first, same_gpu, expensive], policy, history, 101.0, mode="mock")
+    assert r["selected"] == same_gpu.model_dump()
+    r = rank_candidates(task, [first, other], policy, history, 160.0, mode="mock")
+    assert r["selected"] == first.model_dump()
