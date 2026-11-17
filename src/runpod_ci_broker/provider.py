@@ -65,7 +65,8 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class Transport:
-    def __init__(self) -> None:
+    def __init__(self, *, deadline: float | None = None) -> None:
+        self.deadline = deadline
         self._key = os.environ.get("RUNPOD_API_KEY")
         if not self._key:
             raise ProviderError("credentials_missing")
@@ -91,10 +92,15 @@ class Transport:
             },
         )
         try:
-            with build_opener(NoRedirect).open(req, timeout=15) as response:
-                raw = response.read(8_000_001)
-            if len(raw) > 8_000_000:
-                raise ProviderError("response_too_large")
+            request_deadline = min(
+                self.deadline if self.deadline is not None else time.monotonic() + 15,
+                time.monotonic() + 15,
+            )
+            timeout = request_deadline - time.monotonic()
+            if timeout <= 0:
+                raise ProviderError("search_deadline_reached")
+            with build_opener(NoRedirect).open(req, timeout=timeout) as response:
+                raw = bounded_body(response, 8_000_000, request_deadline)
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise ProviderError("invalid_response")

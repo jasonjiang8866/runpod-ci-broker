@@ -7,6 +7,7 @@ import random
 from pathlib import Path
 from typing import Any
 
+from .discovery import SearchHistory, SearchPolicy, capacity_feedback, rank_candidates
 from .fake import FakeProvider
 from .models import Authorization, Candidate, Task
 from .planner import authorize, plan, reasons
@@ -58,11 +59,14 @@ class Engine:
         journal: TaskJournal,
         results_dir: Path,
         run_id: str = "local-mock",
+        *,
+        search_policy: SearchPolicy | None = None,
     ):
         if type(provider) is not FakeProvider:
             raise ValueError("live_execution_not_implemented")
         self.task, self.p, self.j, self.results_dir = task, provider, journal, results_dir
         self.run_id = run_id
+        self.search_policy = search_policy
         previous = journal.read()
         if previous:
             if previous["config_fingerprint"] != task.fingerprint():
@@ -98,7 +102,24 @@ class Engine:
                 "metrics": {},
                 "planning_history": [],
             }
+        self.configure_search()
         self.markers = owner(task, self.r["actions_run_id"])
+
+    def configure_search(self) -> None:
+        previous = self.r.get("resource_search")
+        if previous:
+            stored = SearchPolicy.model_validate(previous["policy"])
+            if self.search_policy is not None and self.search_policy != stored:
+                raise ValueError("search_policy_changed_on_resume")
+            self.search_policy = stored
+        elif self.search_policy is not None:
+            if self.r["attempts"] or self.r["query_count"]:
+                raise ValueError("search_policy_changed_on_resume")
+            self.r["resource_search"] = {
+                "policy": self.search_policy.model_dump(),
+                "history": SearchHistory(config_fingerprint=self.task.fingerprint()).model_dump(),
+                "mode": "mock",
+            }
 
     def save(self) -> None:
         self.j.write(self.r)
@@ -297,7 +318,15 @@ class Engine:
                 self.transition("PREFLIGHT_BLOCKED")
             return
         self.r["last_query_error"] = None
-        report = plan(self.task, candidates)
+        if self.search_policy:
+            history = SearchHistory.model_validate(self.r["resource_search"]["history"])
+            report = rank_candidates(
+                self.task, candidates, self.search_policy, history, self.p.now(), mode="mock"
+            )
+            for key in ("candidate_queue", "ranking", "selection_reason"):
+                self.r[key] = report[key]
+        else:
+            report = plan(self.task, candidates)
         self.r.setdefault("planning_history", []).append(
             {
                 "at": self.p.now(),
@@ -357,6 +386,11 @@ class Engine:
                 self.transition("CREATE_UNKNOWN")
             else:
                 self.r["create_intent"] = False  # only an explicit rejected create
+                if self.search_policy and exc.code == "no_capacity":
+                    history = SearchHistory.model_validate(self.r["resource_search"]["history"])
+                    self.r["resource_search"]["history"] = capacity_feedback(
+                        self.task, c, history, exc, self.p.now(), mode="mock"
+                    ).model_dump()
                 if exc.retryable and self.r["attempts"] < b.max_start_attempts:
                     self.transition("WAITING_CAPACITY")
                 else:
@@ -372,6 +406,7 @@ class Engine:
                     raise ValueError("experiment_id_reused_with_different_config")
                 self.r = latest
                 self.markers = owner(self.task, self.r["actions_run_id"])
+                self.configure_search()
             if self.run_id not in self.r["resume_run_ids"]:
                 self.r["resume_run_ids"].append(self.run_id)
             if self.r["state"] == "CREATING":

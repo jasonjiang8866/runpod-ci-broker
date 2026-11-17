@@ -1,0 +1,8 @@
+{
+  "objective": "availability",
+  "initial_interval_seconds": 5,
+  "max_interval_seconds": 30,
+  "cooldown_seconds": 60,
+  "max_observation_age_seconds": 30,
+  "max_http_requests": 64
+}
