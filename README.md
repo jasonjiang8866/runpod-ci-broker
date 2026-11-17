@@ -116,6 +116,11 @@ workflow uses a digest-pinned release manifest; arbitrary training is not enable
 See [single-task allocation and recovery](docs/bounded-allocation.md) for its API,
 failure contract, offline evidence and remaining activation gates.
 
+Latest [paid allocation regression](docs/allocation-regression-20261117.md): global
+capacity feedback found a PRO 6000 Server Pod, but worker readiness and GPU
+acceptance failed. Manual recovery confirmed deletion. The launch manifest is
+disabled pending startup and recovery reliability work; no success-rate claim is made.
+
 ```bash
 uv run pytest
 uv run ruff check src tests

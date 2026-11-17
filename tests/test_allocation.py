@@ -446,6 +446,42 @@ def test_cancelled_waiting_task_cannot_reopen_its_search(allocation):
     assert not cloud.creates and not cloud.reads
 
 
+def test_retryable_readiness_errors_obey_startup_deadline(allocation, monkeypatch):
+    c, cloud = allocation
+
+    class Reader:
+        def __init__(self, *args):
+            pass
+
+        def readiness(self, *args):
+            raise ProviderError("result_not_ready", retryable=True)
+
+    monkeypatch.setattr("runpod_ci_broker.allocation.RunPodResultReader", Reader)
+    c.start(confirmed=True)
+    started = cloud.now()
+    r = c.collect()
+    assert r["facts"]["pod_deleted_confirmed"] and not r["facts"]["results_saved"]
+    assert cloud.now() - started <= c.task.limits.startup_seconds + 3
+    assert len(cloud.creates) == 1
+
+
+def test_collection_preserves_ledger_failure_for_independent_recovery(allocation, monkeypatch):
+    c, cloud = allocation
+    c.start(confirmed=True)
+
+    def fail():
+        raise LedgerError("ledger_write_unconfirmed")
+
+    def must_not_reacquire():
+        raise AssertionError("must not mask the original ledger error")
+
+    monkeypatch.setattr(c, "_collect", fail)
+    monkeypatch.setattr(c.j, "lock", must_not_reacquire)
+    with pytest.raises(LedgerError, match="^ledger_write_unconfirmed$"):
+        c.collect()
+    assert len(cloud.creates) == 1 and not cloud.deletes
+
+
 def test_cancelled_active_task_cleans_without_restarting(allocation):
     c, cloud = allocation
     c.start(confirmed=True)

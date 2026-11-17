@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "task": {
     "experiment_id": "broker-allocation-20261117-diverse",
     "scope": "broker-bounded-smoke",

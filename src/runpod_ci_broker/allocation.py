@@ -23,6 +23,7 @@ from .cleanup import CleanupClient, cleanup_owned
 from .discovery import SearchHistory, SearchPolicy, admit_snapshot, capacity_feedback
 from .export import RunPodResultReader, capability_valid, collect_https
 from .handover import ControllerJournal, GitHubEvidence
+from .ledger import LedgerError
 from .lifecycle import owner
 from .live import CreateHTTPError
 from .models import Authorization, Candidate, Model, Nonnegative, Positive, Sha, Task
@@ -582,6 +583,10 @@ class BoundedController:
     def collect(self) -> dict[str, Any]:
         try:
             r = self._collect()
+        except LedgerError:
+            # Preserve the original fixed code. Reacquiring a sticky lock here can
+            # replace the useful failure with scope_busy; independent recovery owns it.
+            raise
         except (ProviderError, ValueError, OSError, KeyError, TypeError):
             with self.j.lock():
                 r = self.record()
@@ -696,6 +701,12 @@ class BoundedController:
                     self.save(r)
                     if not exc.retryable:
                         raise
+                    if (
+                        "worker_ready_at" not in r
+                        and self.now()
+                        >= r["attempt_log"][-1]["at"] + self.task.limits.startup_seconds
+                    ):
+                        break
                     self.sleep(min(5, max(0, r["collection_deadline"] - self.now())))
             self.save(r, "TIMED_OUT")
             return r

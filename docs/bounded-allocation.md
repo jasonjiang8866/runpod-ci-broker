@@ -1,5 +1,11 @@
 # Single-task allocation controller
 
+Latest status: [paid regression and cleanup](allocation-regression-20261117.md).
+Live allocation succeeded, GPU acceptance failed, and deletion was confirmed.
+The launch manifest is disabled; manual recovery now skips collection and performs
+ownership-checked cleanup directly. Automatic recovery still attempts collection
+within the original deadline before cleanup.
+
 `allocation.BoundedController` is a prepared controller API for a new task with its
 own budget, execution window and finite create attempts. It searches fresh catalog
 snapshots, feeds confirmed capacity refusals back into ranking, and completes the

@@ -258,6 +258,8 @@ def main() -> int:
         else:
             record = controller.cleanup()
         print(json.dumps({"state": record["state"], "facts": record["facts"]}))
+        if args.action == "cleanup" and record["facts"]["pod_deleted_confirmed"]:
+            return 0  # Cleanup success does not assert experiment acceptance.
         return 0 if record["state"] in {"STARTING", "COLLECTED", "ACCEPTED"} else 2
     except (ProviderError, LedgerError, ValueError, OSError, KeyError, TypeError) as exc:
         # These two exception types carry fixed codes, never response bodies or inputs.
