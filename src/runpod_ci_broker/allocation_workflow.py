@@ -8,11 +8,11 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from .allocation import BoundedController, ExecutionPermit
+from .allocation import AllocationClient, BoundedController, ExecutionPermit
 from .campaign import REGRESSION, REPOSITORY, SCOPE, record_hash, regression_parent
-from .discovery import SearchPolicy
+from .discovery import CapacityRefusal, SearchHistory, SearchPolicy
 from .handover import ControllerJournal, GitHubEvidence, context
 from .ledger import GitHubContentsStore, LedgerError, Store
 from .live import LiveAPI
@@ -25,7 +25,9 @@ from .worker import SUPPORTED_GPUS
 MANIFEST = Path("examples/allocation-smoke.json")
 OUTPUT = Path("out/allocation")
 ALLOCATION_SCOPE = "broker-bounded-smoke"
-EXPERIMENT = "broker-allocation-20261117"
+EXPERIMENT = "broker-allocation-20261117-diverse"
+ALLOCATION_PARENT = "broker-allocation-20261117"
+ALLOCATION_PARENT_HASH = "2efab13abb225be7b25fae1f76e5e690dc78c5c116f3b03228c6b641fcdd7f01"
 PRIOR_HASH = "d61758ff6a2c3b11076cf3995d9345ac85bf0cabb1bccbf2244ad91f73e68aa5"
 LAUNCH = ".github/workflows/allocation-smoke.yml"
 RECOVERY = ".github/workflows/recover-allocation.yml"
@@ -45,14 +47,14 @@ class Manifest(Model):
             or task.repository != REPOSITORY
             or set(task.gpu_allowlist) != SUPPORTED_GPUS
             or task.data_centers
-            or task.limits.prior_spend_usd != 6.001002
+            or task.limits.prior_spend_usd != 8.001502
             or task.limits.total_budget_usd != 20.0
             or task.limits.max_gpu_hourly_usd != 3.0
             or task.limits.max_start_attempts != 3
             or not cost["complete"]
             or not cost["within_budget"]
             or cost["seconds_per_attempt"] != 600
-            or cost["estimated_total_usd"] > 8.01
+            or cost["estimated_total_usd"] > 10.01
             or task.limits.max_wait_seconds > 600
         ):
             raise ValueError("reviewed_allocation_manifest_required")
@@ -95,6 +97,33 @@ def permit_for(task: Task, identity: dict[str, Any], end: float, now: float) -> 
         window_end=end,
         worker_source_sha=task.source_sha,
         worker_image=task.image,
+    )
+
+
+def allocation_predecessor(
+    journal: ControllerJournal, task: Task, github: GitHubEvidence, end: float
+) -> SearchHistory:
+    _, scope = journal.load()
+    r = scope["records"].get(ALLOCATION_PARENT)
+    if (
+        not r
+        or scope["holder"] is not None
+        or record_hash(r) != ALLOCATION_PARENT_HASH
+        or r["state"] != "NO_CAPACITY"
+        or r["create_intent"] is not False
+        or r["pod_id"] is not None
+        or r["attempts"] != 3
+        or any(a["outcome"] != "capacity_refused" for a in r["attempt_log"])
+        or r["allocation"]["reserved_total_microusd"] != 8001502
+        or end != r["allocation"]["permit"]["window_end"]
+        or not github.completed(scope["controller"])
+    ):
+        raise ValueError("capacity_continuation_not_verified")
+    return SearchHistory(
+        config_fingerprint=task.fingerprint(),
+        refusals=[
+            CapacityRefusal.model_validate(x) for x in r["resource_search"]["history"]["refusals"]
+        ],
     )
 
 
@@ -150,6 +179,7 @@ def main() -> int:
             store, ALLOCATION_SCOPE, EXPERIMENT, identity, github.completed, recovery=recovery
         )
         saved = journal.read()
+        initial_history = None
         if not saved:
             if args.action not in {"prepare", "start"}:
                 print('{"state":"NO_OWNED_INTENT","runpod_operations":0}')
@@ -157,6 +187,9 @@ def main() -> int:
             if not spec.enabled:
                 raise ValueError("allocation_release_not_activated")
             predecessor(store, github)
+            initial_history = allocation_predecessor(
+                journal, spec.task, github, args.window_end or 0
+            )
             permit = permit_for(spec.task, identity, args.window_end or 0, time.time())
             task, policy = spec.task, spec.policy
         else:
@@ -201,7 +234,16 @@ def main() -> int:
         def get(path: str, params: dict[str, Any]) -> dict[str, Any]:
             return Transport().get(path, params)
 
-        controller = BoundedController(task, permit, journal, api, get, OUTPUT, policy=policy)  # type: ignore[arg-type]
+        controller = BoundedController(
+            task,
+            permit,
+            journal,
+            cast(AllocationClient, api),
+            get,
+            OUTPUT,
+            policy=policy,
+            initial_history=initial_history,
+        )
         if args.action == "start":
             record = controller.start(confirmed=args.confirm_paid)
         elif args.action == "collect":

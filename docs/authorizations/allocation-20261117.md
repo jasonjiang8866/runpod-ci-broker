@@ -27,3 +27,10 @@ prior reservations or grant a separate USD 20 allowance.
 
 This record captures the approved scope and planned limits. It is not GPU outcome
 evidence or proof of authorization from an arbitrary user-supplied JSON flag.
+
+The first three attempts were all definitive capacity refusals and created no
+Pod. The bounded diversity continuation retains their full reservation and exact
+23:30:08 Singapore deadline, with at most three further attempts inside the same
+owner-approved USD 20 campaign. Total retained reservation becomes USD 10.002002
+and 7200 seconds. A verified predecessor hash and completed recovery are required;
+unknown outcomes or missing history cannot qualify for this continuation.

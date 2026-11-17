@@ -29,6 +29,7 @@ class SearchPolicy(Model):
     cooldown_seconds: Annotated[int, Field(ge=1, le=3600)] = 60
     max_observation_age_seconds: Annotated[int, Field(ge=1, le=300)] = 30
     max_http_requests: Annotated[int, Field(ge=1, le=200)] = 64
+    diversify_after_refusal: bool = False
 
     @model_validator(mode="after")
     def interval_order(self) -> Self:
@@ -115,6 +116,9 @@ def rank_candidates(
         key = (refusal.gpu_id, refusal.data_center)
         cooldowns[key] = max(cooldowns.get(key, 0), refusal.observed_at + policy.cooldown_seconds)
     known_centers = {dc["id"] for dc in (observations or {}).get("data_centers", [])}
+    recent = [r for r in history.refusals if r.observed_at + policy.cooldown_seconds > now]
+    gpu_refusals = Counter(r.gpu_id for r in recent)
+    center_refusals = Counter(r.data_center for r in recent)
     queue = []
     for decision in report["decisions"]:
         c = decision["candidate"]
@@ -137,13 +141,25 @@ def rank_candidates(
             "stock_order": {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "AVAILABLE": 3}.get(signal, 4),
             "gpu_preference_order": preferences.index(c["gpu_id"]),
             "per_gpu_hourly_usd": c["hourly_usd"],
+            "recent_gpu_refusals": gpu_refusals[c["gpu_id"]],
+            "recent_center_refusals": center_refusals[c["data_center"]],
         }
         queue.append({"candidate": c, "ranking_factors": factors, "availability_signal": signal})
-    fields = {
+    fields: tuple[str, ...] = {
         "availability": ("stock_order", "gpu_preference_order", "per_gpu_hourly_usd"),
         "preference": ("gpu_preference_order", "stock_order", "per_gpu_hourly_usd"),
         "price": ("per_gpu_hourly_usd", "stock_order", "gpu_preference_order"),
     }[policy.objective]
+    if policy.diversify_after_refusal and recent and policy.objective == "availability":
+        # Soft exploration penalty, not a claim about capacity probability. The
+        # exact refused pair stays excluded; other placements remain candidates.
+        fields = (
+            "recent_gpu_refusals",
+            "recent_center_refusals",
+            "stock_order",
+            "per_gpu_hourly_usd",
+            "gpu_preference_order",
+        )
     queue.sort(
         key=lambda item: (
             tuple(item["ranking_factors"][f] for f in fields)
