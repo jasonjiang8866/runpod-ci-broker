@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -258,8 +259,20 @@ def main() -> int:
             record = controller.cleanup()
         print(json.dumps({"state": record["state"], "facts": record["facts"]}))
         return 0 if record["state"] in {"STARTING", "COLLECTED", "ACCEPTED"} else 2
-    except (ProviderError, LedgerError, ValueError, OSError, KeyError, TypeError):
-        print('{"error":"allocation_workflow_refused_or_failed","see_trusted_journal":true}')
+    except (ProviderError, LedgerError, ValueError, OSError, KeyError, TypeError) as exc:
+        # These two exception types carry fixed codes, never response bodies or inputs.
+        code = exc.code if isinstance(exc, ProviderError) else str(exc)
+        safe = isinstance(exc, (ProviderError, LedgerError)) and re.fullmatch(
+            r"[a-z_]{1,100}", code
+        )
+        print(
+            json.dumps(
+                {
+                    "error": code if safe else "allocation_workflow_refused_or_failed",
+                    "see_trusted_journal": True,
+                }
+            )
+        )
         return 2
     finally:
         if journal:
