@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_paid:
-        description: Continue the USD 20 campaign with all six prior reservations; at most 3 new attempts
+        description: Continue the USD 20 campaign with all prior reservations; at most 3 new attempts
         type: boolean
         default: false
       window_end:
@@ -36,6 +36,10 @@ jobs:
           version: '0.13.5'
           enable-cache: false
       - run: uv sync --locked --no-dev --python 3.12
+      - name: Prepare runner-local evidence encryption
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.sealed
       - name: Validate the reviewed task and execution window
         id: release
         env:
@@ -66,13 +70,13 @@ jobs:
         run: uv run --locked python -m runpod_ci_broker.allocation_workflow collect
       - name: Export verified bundle
         id: bundle
-        if: always() && hashFiles('out/allocation/bundle/manifest.json') != ''
+        if: always() && hashFiles('out/allocation/bundle.enc') != ''
         continue-on-error: true
         timeout-minutes: 1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: allocation-bundle-${{ github.run_id }}-${{ github.run_attempt }}
-          path: out/allocation/bundle/
+          path: out/allocation/bundle.enc
           if-no-files-found: error
           retention-days: 30
       - name: Verify durable upload receipt

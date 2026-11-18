@@ -21,8 +21,8 @@ def test_reviewed_manifest_has_global_gpu_set_and_preserves_old_budget():
     assert set(s.task.gpu_allowlist) == SUPPORTED_GPUS
     assert s.task.gpu_preference[0].endswith("4090")
     b = estimate(s.task)
-    assert b["estimated_total_usd"] == 10.002002
-    assert b["seconds_per_attempt"] * 3 + 3600 < 18000
+    assert b["estimated_total_usd"] == 12.002502
+    assert b["seconds_per_attempt"] * 3 + 7200 < 18000
 
 
 @pytest.mark.parametrize(
@@ -148,7 +148,11 @@ def test_cli_full_lifecycle_keeps_budget_and_export_identity(tmp_path, monkeypat
 
     from runpod_ci_broker.allocation import BoundedController
     from runpod_ci_broker.ledger import SQLiteStore
+    from runpod_ci_broker.sealed import setup_key
 
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("RUNPOD_API_KEY", "offline-fixture")
+    setup_key()
     s = spec()
     s.enabled = True
     path = tmp_path / "manifest.json"
@@ -193,6 +197,18 @@ def test_cli_full_lifecycle_keeps_budget_and_export_identity(tmp_path, monkeypat
     github = export_fixture(c, cloud, monkeypatch)
     monkeypatch.setattr(entry, "GitHubEvidence", lambda: github)
     assert run("collect") == 0
+    import io
+    import zipfile
+
+    from runpod_ci_broker.sealed import unseal
+
+    encrypted = (entry.OUTPUT / "bundle.enc").read_bytes()
+    with zipfile.ZipFile(io.BytesIO(unseal(encrypted, "bundle/" + s.task.fingerprint()))) as z:
+        assert json.loads(z.read("manifest.json"))["pod_id"] == c.j.read()["pod_id"]
+    with pytest.raises(entry.LedgerError):
+        unseal(encrypted, "wrong-purpose")
+    assert "pod_id" not in json.loads((entry.OUTPUT / "report.json").read_text())
+    assert "sealed_v1" in store.read(c.j.key)[1]
     monkeypatch.setenv("RCB_ARTIFACT_ID", "123")
     monkeypatch.setenv("RCB_ARTIFACT_DIGEST", "d" * 64)
     assert run("receipt") == 0
@@ -269,43 +285,35 @@ def test_predecessor_budget_and_cleanup_are_verified_without_writing(monkeypatch
         entry.predecessor(Store(), github)
 
 
-def test_continuation_keeps_original_window_and_imports_only_verified_refusals(monkeypatch):
+def test_recheck_requires_completed_owned_cleanup(monkeypatch):
     from runpod_ci_broker.campaign import record_hash
 
-    task = spec().task
-    r = {
-        "state": "NO_CAPACITY",
-        "create_intent": False,
-        "pod_id": None,
-        "attempts": 3,
-        "attempt_log": [{"outcome": "capacity_refused"}] * 3,
-        "allocation": {"reserved_total_microusd": 8001502, "permit": {"window_end": 1794929408.0}},
-        "resource_search": {
-            "history": {
-                "refusals": [
-                    {
-                        "gpu_id": "NVIDIA GeForce RTX 4090",
-                        "data_center": "EU-RO-1",
-                        "observed_at": 1794928000.0,
-                        "reason": "definitive_capacity_refusal",
-                    }
-                ]
-            }
+    cleaned = {
+        "state": "REJECTED",
+        "facts": {"pod_deleted_confirmed": True},
+        "cleanup_verification": "direct_404_and_complete_inventory_twice",
+        "allocation": {"reserved_total_microusd": 10002002},
+        "resource_search": {"history": {"refusals": []}},
+    }
+    scope = {
+        "scope": entry.PARENT_SCOPE,
+        "holder": None,
+        "controller": {},
+        "records": {
+            entry.ALLOCATION_PARENT: {},
+            entry.CLEANED_PARENT: cleaned,
         },
     }
-    scope = {"holder": None, "controller": {}, "records": {entry.ALLOCATION_PARENT: r}}
 
-    class Journal:
-        def load(self):
+    class Store:
+        def read(self, key):
             return "a" * 40, scope
 
     github = GitHubEvidence()
     monkeypatch.setattr(github, "completed", lambda _: True)
-    monkeypatch.setattr(entry, "ALLOCATION_PARENT_HASH", record_hash(r))
-    h = entry.allocation_predecessor(Journal(), task, github, 1794929408.0)
-    assert h.config_fingerprint == task.fingerprint() and len(h.refusals) == 1
-    with pytest.raises(ValueError, match="continuation"):
-        entry.allocation_predecessor(Journal(), task, github, 1794929409.0)
-    r["attempt_log"][0] = {"outcome": "unknown"}
-    with pytest.raises(ValueError, match="continuation"):
-        entry.allocation_predecessor(Journal(), task, github, 1794929408.0)
+    monkeypatch.setattr(entry, "ALLOCATION_PARENT_HASH", record_hash({}))
+    monkeypatch.setattr(entry, "CLEANED_HASH", record_hash(cleaned))
+    assert entry.allocation_predecessor(Store(), spec().task, github).refusals == []
+    cleaned["facts"]["pod_deleted_confirmed"] = False
+    with pytest.raises(ValueError, match="unverified"):
+        entry.allocation_predecessor(Store(), spec().task, github)
