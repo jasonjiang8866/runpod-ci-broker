@@ -34,17 +34,21 @@ def estimate(task: Task) -> dict[str, Any]:
             b.transfer_reserve_usd,
             b.request_reserve_usd,
             b.cleanup_reserve_usd,
-            b.prior_spend_usd,
         ]
     )
-    total = (gpu + storage + extras).quantize(Decimal("0.000001"), rounding=ROUND_CEILING)
+    incremental = gpu + storage + extras
+    prior = Decimal(str(b.prior_spend_usd))
+    total = (incremental + prior).quantize(Decimal("0.000001"), rounding=ROUND_CEILING)
     return {
         "complete": True,
         "within_budget": total <= Decimal(str(b.total_budget_usd)),
         "gpu_usd": float(gpu),
         "storage_usd": float(storage),
-        "reserves_usd": float(extras),
+        "reserves_usd": float(extras + prior),
         "estimated_total_usd": float(total),
+        "incremental_reservation_microusd": int(
+            (incremental * 1_000_000).to_integral_value(rounding=ROUND_CEILING)
+        ),
         "seconds_per_attempt": seconds,
         "reserved_attempts": b.max_start_attempts,
         "basis": b.cost_basis,
