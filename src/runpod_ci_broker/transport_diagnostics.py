@@ -96,13 +96,17 @@ def proxy_environment(environ: Mapping[str, str]) -> dict[str, bool]:
     }
 
 
-def record_startup(record: dict[str, Any], pod: dict[str, Any], now: float) -> None:
+def record_startup(
+    record: dict[str, Any], pod: dict[str, Any], now: float, *, intent_at: float | None = None
+) -> None:
     """Project an already owner-checked GET; no extra API call or readiness claim."""
     status = pod.get("status")
     ports = pod.get("ports")
     runtime = pod.get("runtime")
+    if intent_at is None:
+        intent_at = record["campaign"]["first_intent_at"]
     sample = {
-        "seconds_since_intent": round(max(0.0, now - record["campaign"]["first_intent_at"]), 3),
+        "seconds_since_intent": round(max(0.0, now - intent_at), 3),
         "pod_status": status if isinstance(status, str) and status in POD_STATES else "unknown",
         "result_port_configured": ("8000/http" in ports)
         if isinstance(ports, list) and all(isinstance(p, str) for p in ports)

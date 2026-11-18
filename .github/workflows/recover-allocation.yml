@@ -37,7 +37,7 @@ jobs:
           enable-cache: false
       - run: uv sync --locked --no-dev --python 3.12
       - name: Recover identity and collect within original deadline
-        if: always() && github.event_name == 'workflow_run'
+        if: always() && github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
         continue-on-error: true
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}

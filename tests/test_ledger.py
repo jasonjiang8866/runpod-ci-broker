@@ -290,3 +290,22 @@ def test_github_network_write_unknown_and_no_retry(monkeypatch):
     with pytest.raises(LedgerError, match="write_unknown"):
         store.swap("a" * 64, None, {})
     assert len(opener.requests) == 1
+
+
+def test_stale_checkpoint_readback_reconciles_without_repeating_write(task, monkeypatch):
+    store = MemoryStore()
+    journal = SharedJournal(store, task.scope, task.experiment_id)
+    read = store.read
+    stale = True
+
+    def read_once_stale(key):
+        nonlocal stale
+        if key in store.data and store.writes == 1 and stale:
+            stale = False
+            return None, None
+        return read(key)
+
+    monkeypatch.setattr(store, "read", read_once_stale)
+    with journal.lock():
+        assert store.writes == 1
+    assert store.writes == 2 and not stale
