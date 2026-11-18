@@ -1,5 +1,5 @@
 {
-  "enabled": true,
+  "enabled": false,
   "task": {
     "experiment_id": "broker-allocation-20261118-recheck",
     "scope": "broker-sealed-smoke-v1",

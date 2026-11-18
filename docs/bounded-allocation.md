@@ -1,10 +1,9 @@
 # Single-task allocation controller
 
-Latest status: [paid regression and cleanup](allocation-regression-20261117.md).
-Live allocation succeeded, GPU acceptance failed, and deletion was confirmed.
-The launch manifest is disabled; manual recovery now skips collection and performs
-ownership-checked cleanup directly. After an unsuccessful or cancelled launch, automatic recovery goes directly to
-exact-ownership cleanup. A successful launch retains the existing recovery collection path.
+The [November 18 paid regression](#november-18-paid-regression) passed. The launch
+manifest is disabled. After an unsuccessful or cancelled launch, automatic recovery
+goes directly to exact-ownership cleanup. A successful launch retains the recovery
+collection path. Manual recovery can perform ownership-checked cleanup directly.
 
 The allocation report includes bounded observations of Pod status, port configuration,
 result HTTP failures and a one-shot startup log summary. The controller samples logs on
@@ -129,7 +128,7 @@ wrong ownership; failed deletion and recovery handover. Existing offline CI runs
 these tests without cloud credentials.
 
 The manual `allocation-smoke.yml` and `recover-allocation.yml` share the historical
-campaign concurrency group. The reviewed `examples/allocation-smoke.json` carries
+campaign concurrency group. The first reviewed version of `examples/allocation-smoke.json` carried
 all six prior reservations (USD 6.001002 / 3600 seconds) into the USD 20 / 18000-second
 campaign. Before starting, the wrapper checks the accepted sixth record's hash,
 all predecessor hashes and the previous controller's completed status. It never
@@ -144,11 +143,6 @@ an unapproved card. Exact IDs include the consumer GPUs, PRO 6000 Server,
 Workstation, Max-Q and MIG 1g.24gb/2g.48gb, as listed in the
 [official RunPod GPU table](https://github.com/runpod/docs/blob/main/references/gpu-types.mdx).
 Host CUDA is a numeric minimum of 12.8; runtime identity remains independently checked.
-
-Publish the expanded worker, pin its source SHA/digest and enable the manifest,
-then run the specific paid smoke and verify independent recovery. A successful run would establish
-this controller's lifecycle only. Real fallback needs an observed capacity refusal;
-improved rental success rates need a larger, comparable sample.
 
 ## First live search and diversity continuation
 
@@ -174,3 +168,24 @@ UTC deadline **1794929408** (2026-11-17 23:30:08 Singapore), and permits at most
 three further attempts. No counters or reservations in the first record are reset.
 The total conservative reservation is USD 10.002002 / 7200 seconds, within the
 original USD 20 / 18000-second campaign. The unchanged published worker is reused.
+
+## November 18 paid regression
+
+The [paid run](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/44305716295)
+reached `ACCEPTED`. With global placement enabled, the first create attempt
+obtained an NVIDIA GeForce RTX 4090. The report recorded two temporary
+`result_not_ready` observations. The worker reached authenticated readiness,
+passed the CUDA memory check and exited with code zero. The broker verified the
+encrypted result upload receipt. A direct 404 and two complete inventory checks
+confirmed Pod deletion. The [independent recovery workflow](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/44305996261)
+then passed. Estimated compute cost was USD 0.0156.
+
+The retained campaign reservation reached USD 12.002502 and 9000 lifecycle
+seconds. The workflow publishes a limited status report and encrypts this scope's
+journal and result bundle. Decryption requires the original RunPod credential
+version used to derive the key. The completed run's launch manifest is disabled.
+
+The [November 17 run](allocation-regression-20261117.md) exercised capacity
+fallback and reached a PRO 6000 Server whose worker failed to become ready.
+The RTX 4090 run verifies the successful lifecycle. The cause of the earlier
+PRO 6000 startup failure and the rental success rate across regions remain open.

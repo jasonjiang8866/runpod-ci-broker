@@ -116,10 +116,10 @@ workflow uses a digest-pinned release manifest; arbitrary training is not enable
 See [single-task allocation and recovery](docs/bounded-allocation.md) for its API,
 failure contract, offline evidence and remaining activation gates.
 
-Latest [paid allocation regression](docs/allocation-regression-20261117.md): global
-capacity feedback found a PRO 6000 Server Pod, but worker readiness and GPU
-acceptance failed. Manual recovery confirmed deletion. The launch manifest is
-disabled pending startup and recovery reliability work; no success-rate claim is made.
+The latest [paid allocation regression](docs/bounded-allocation.md#november-18-paid-regression)
+passed on an RTX 4090. Global search needed one create attempt. The broker verified
+CUDA memory access, the result upload receipt and Pod deletion. Independent
+recovery also passed. The completed run's launch manifest is disabled.
 
 ```bash
 uv run pytest
