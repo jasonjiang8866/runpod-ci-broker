@@ -76,6 +76,30 @@ M1 的付费验收至少包含一次真实查找→创建→认证就绪→GPU s
 3090 的任务；在可验证的资源约束下比较分配。另测并发领取冲突、预算耗尽、
 迟到任务、饥饿保护和控制器崩溃恢复。库存等级不能充当精确的 GPU 数量。
 
+#### M2 首个交付：离线队列和共享预算
+
+同一中央队列的提交者和控制器共用一个队列名和 SQLite 文件。队列以
+`(scope, experiment_id)` 标识任务，持久化完整配置、优先级、首次入队时间和可选的
+最晚启动时间（UTC Unix 秒，到该秒即截止）。相同提交可重放；同一身份更改配置、
+优先级或截止时间会返回冲突。以下命令可在本地复现：
+
+```bash
+queue() { uv run python -m runpod_ci_broker.queue_cli --db .broker/queue.db --queue demo "$@"; }
+queue init --budget-microusd 2000000 --opening-reserved-microusd 0 --slots 1
+queue submit --config examples/simplexlora-flexible.json
+queue claim --scope broker-demo --experiment-id simplexlora-cuda-int8-smoke --owner controller-1
+queue status
+```
+
+初始化时固定期初预留、预算和并发槽数。所有任务引用的历史费用须已包含在同一
+期初预留中。每个获领任务只增加自身全部允许尝试的预留，以整数 micro-USD 向上取整。
+一个条件写入同时记录领取者、占用一个任务槽并计入费用。重复领取返回
+`already_claimed`；只有 `claimed` 表示本次新获领。写入结果不明时通过
+`status` 查询持久状态。槽满、预算不足和截止时间已过分别有独立原因。
+
+当前 CLI 只操作共享本地文件。领取在重启后仍占槽；后续执行接入将以清理证据
+释放槽位。下一步是在同一快照上为多个排队任务选择候选。
+
 ### M3：可选优化器与实验设计
 
 - 首先给出明确目标，例如优先满足高优先级任务，再降低预计等待和费用。
