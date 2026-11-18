@@ -32,9 +32,11 @@ Controller 的 `search_policy` 参数或 `start --search-policy PATH` 显式选�
 
 ### M1b：通用单任务控制器与付费验证
 
-**本轮进展：已发布镜像并完成真实付费测试；跨机房租卡成功，worker 就绪和 GPU 验收失败，Pod 已确认清理。**
-详见[本轮验收与反思](allocation-regression-20261117.md)。当前先修复采集与独立清理的
-可靠性，再进行下一次完整验收；M2 队列和 M3 优化器仍未开始。
+**M1 单任务付费验收已通过。** 11 月 18 日的全球查找在首次创建时租到 RTX 4090，
+worker 就绪、CUDA 显存读写、结果上传回执和 Pod 删除均已验证，独立恢复也已通过。
+详见[本次付费验收](bounded-allocation.md#november-18-paid-regression)。
+[11 月 17 日的 PRO 6000 Server 启动失败](allocation-regression-20261117.md)仍待定位。
+下一里程碑为 M2 多任务队列与统一预算，M3 继续保留求解器接口。
 `allocation.BoundedController` 将新的任务身份、预算和执行窗口从历史 campaign
 中分离；目前工作负载仍限定为已发布的固定 GPU smoke。它通过相同的
 `PlacementSolver` 接口选择候选，没有增加 MILP 依赖。详见
