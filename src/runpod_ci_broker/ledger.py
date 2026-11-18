@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -240,9 +241,17 @@ class SharedJournal:
             if str(exc) != "ledger_write_unknown":
                 raise
             # A lost write response is reconciled by exact read-back, never resubmitted.
-        _, observed = self.load()
-        if observed != value:
-            raise LedgerError("ledger_write_unconfirmed")
+        # An immediately preceding version can still be visible after a Contents PUT.
+        # Retry only the read, never the mutation or a conflicting third version.
+        for delay in (0.0, 0.25, 0.75):
+            if delay:
+                time.sleep(delay)
+            observed_version, observed = self.load()
+            if observed == value:
+                return
+            if observed_version != version:
+                break
+        raise LedgerError("ledger_write_unconfirmed")
 
     @contextmanager
     def lock(self) -> Iterator[None]:

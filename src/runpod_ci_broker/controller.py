@@ -41,6 +41,7 @@ from .planner import plan, reasons
 from .provider import ProviderError, ReadOnlyRunPod
 from .report import write_report
 from .results import validate_manifest, verify_saved
+from .startup import capture_startup_logs
 from .transport_diagnostics import proxy_environment, record_startup
 from .worker import Observation, admit
 
@@ -467,25 +468,8 @@ class Controller:
         self.save(r, "COLLECTED")
 
     def diagnose_startup(self, r: dict[str, Any]) -> None:
-        # At most once across resumes, within the existing collection deadline.
-        # Failure to diagnose never prevents the caller from entering cleanup.
-        if "startup_logs" in r:
-            return
-        left = (
-            min(r["campaign"]["collection_deadline"], r["campaign"]["wall_deadline"]) - self.now()
-        )
-        r["startup_logs"] = {"status": "skipped_deadline", "root_cause": "unverified"}
-        if left < 4:
-            self.save(r)
-            return
-        r["startup_logs"]["status"] = "attempted_unconfirmed"
-        self.save(r)  # lost response must not enable another log request
-        try:
-            # adopt() has already verified this Pod in the current collection iteration.
-            r["startup_logs"] = self.api.startup_logs(r["pod_id"], 3)
-        except (ProviderError, ValueError, OSError, TypeError):
-            r["startup_logs"] = {"status": "diagnostic_unavailable", "root_cause": "unverified"}
-        self.save(r)
+        deadline = min(r["campaign"]["collection_deadline"], r["campaign"]["wall_deadline"])
+        capture_startup_logs(r, deadline, self.now, self.save, self.api.startup_logs)
 
     def collect(self) -> dict[str, Any]:
         try:

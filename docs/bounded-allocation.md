@@ -3,8 +3,15 @@
 Latest status: [paid regression and cleanup](allocation-regression-20261117.md).
 Live allocation succeeded, GPU acceptance failed, and deletion was confirmed.
 The launch manifest is disabled; manual recovery now skips collection and performs
-ownership-checked cleanup directly. Automatic recovery still attempts collection
-within the original deadline before cleanup.
+ownership-checked cleanup directly. After an unsuccessful or cancelled launch, automatic recovery goes directly to
+exact-ownership cleanup. A successful launch retains the existing recovery collection path.
+
+The allocation report includes bounded observations of Pod status, port configuration,
+result HTTP failures and a one-shot startup log summary. The controller samples logs on
+a terminal startup failure, a startup timeout or repeated readiness errors while time
+remains. A stale read of the previous journal version after a conditional write gets
+two additional read-back attempts. A persistent state-store outage can still delay
+cleanup.
 
 `allocation.BoundedController` is a prepared controller API for a new task with its
 own budget, execution window and finite create attempts. It searches fresh catalog

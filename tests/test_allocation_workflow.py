@@ -67,7 +67,10 @@ def test_new_workflows_are_main_manual_only_and_share_legacy_mutex(monkeypatch):
             collect = next(
                 s for s in job["steps"] if "allocation_workflow collect" in s.get("run", "")
             )
-            assert collect["if"] == "always() && github.event_name == 'workflow_run'"
+            assert (
+                collect["if"]
+                == "always() && github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'"
+            )
         monkeypatch.setenv("GITHUB_REPOSITORY", entry.REPOSITORY)
         monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
         monkeypatch.setenv("GITHUB_SHA", "a" * 40)

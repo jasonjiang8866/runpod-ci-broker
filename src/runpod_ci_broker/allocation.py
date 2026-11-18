@@ -21,7 +21,7 @@ from pydantic import Field, model_validator
 from .campaign import REPAIR_IMAGE, REPAIR_SOURCE, REPOSITORY, SCOPE
 from .cleanup import CleanupClient, cleanup_owned
 from .discovery import SearchHistory, SearchPolicy, admit_snapshot, capacity_feedback
-from .export import RunPodResultReader, capability_valid, collect_https
+from .export import ResultHTTPError, RunPodResultReader, capability_valid, collect_https
 from .handover import ControllerJournal, GitHubEvidence
 from .ledger import LedgerError
 from .lifecycle import owner
@@ -31,6 +31,8 @@ from .optimization import PlacementSolver, RankedFirstSolver, digest, microusd
 from .planner import authorize, estimate, plan, reasons
 from .provider import ProviderError, ReadOnlyRunPod
 from .results import validate_manifest, verify_saved
+from .startup import capture_startup_logs
+from .transport_diagnostics import record_startup
 from .worker import SUPPORTED_GPUS, Observation, admit
 
 
@@ -55,6 +57,7 @@ class ExecutionPermit(Model):
 
 
 class AllocationClient(CleanupClient, Protocol):
+    def startup_logs(self, pod_id: str, timeout: float) -> dict[str, Any]: ...
     def inventory(self) -> list[dict[str, Any]]: ...
     def create(self, body: dict[str, Any]) -> str: ...
 
@@ -105,7 +108,11 @@ class AttemptCleanup(CleanupClient):
         self.c.api.delete(pod_id, timeout)
 
     def active_ids(self, deadline: float) -> set[str]:
-        return self.c.api.active_ids(deadline)
+        # The controller persists UTC timestamps; the live inventory pager uses monotonic time.
+        remaining = deadline - self.c.now()
+        if remaining <= 0:
+            raise ProviderError("cleanup_deadline")
+        return self.c.api.active_ids(time.monotonic() + remaining)
 
 
 class BoundedController:
@@ -554,6 +561,15 @@ class BoundedController:
             or (r["pod_id"] and pod["id"] != r["pod_id"])
         ):
             raise ProviderError("pod_identity_invalid")
+        intent = r["attempt_log"][-1]
+        if (
+            intent.get("allocation_confirmed_at") is not None
+            and intent.get("pod_id") == r["pod_id"] == pod["id"]
+            and intent.get("actual_data_center")
+            == r["selected"]["data_center"]
+            == pod["dataCenterId"]
+        ):
+            return pod
         r["pod_id"] = pod["id"]
         r["selected"]["data_center"] = pod["dataCenterId"]
         r["attempt_log"][-1].update(
@@ -596,6 +612,11 @@ class BoundedController:
             return self.cleanup()
         return r
 
+    def diagnose_startup(self, r: dict[str, Any]) -> None:
+        capture_startup_logs(
+            r, r["collection_deadline"], self.now, self.save, self.api.startup_logs
+        )
+
     def _collect(self) -> dict[str, Any]:
         with self.j.lock():
             r = self.record()
@@ -615,6 +636,7 @@ class BoundedController:
                 pod = self.adopt(r)
                 if pod is None:
                     return r
+                record_startup(r, pod, self.now(), intent_at=r["attempt_log"][-1]["at"])
                 rate = pod.get("cost")
                 if (
                     isinstance(rate, bool)
@@ -634,7 +656,10 @@ class BoundedController:
                     * r["allocation"]["observed_max_hourly_usd"]
                 )
                 if pod.get("status") in {"ERROR", "EXITED", "TERMINATED"}:
-                    raise ProviderError("worker_not_running")
+                    r["errors"].append("worker_not_running")
+                    self.diagnose_startup(r)
+                    self.save(r, "COLLECTION_FAILED")
+                    return r
                 token = pod["env"].get("RCB_RESULT_TOKEN", "")
                 if (
                     not capability_valid(token)
@@ -659,6 +684,7 @@ class BoundedController:
                             self.now()
                             >= r["attempt_log"][-1]["at"] + self.task.limits.startup_seconds
                         ):
+                            self.diagnose_startup(r)
                             break
                         self.sleep(min(5, max(0, r["collection_deadline"] - self.now())))
                         continue
@@ -698,7 +724,16 @@ class BoundedController:
                     return r
                 except ProviderError as exc:
                     r["errors"].append(exc.code)
+                    if isinstance(exc, ResultHTTPError):
+                        failures = r.setdefault("result_http_failures", [])
+                        failures.append(exc.diagnostic)
+                        if len(failures) > 16:
+                            del failures[1]
                     self.save(r)
+                    if "worker_ready_at" not in r and (
+                        not exc.retryable or r["status_checks"] >= 3
+                    ):
+                        self.diagnose_startup(r)
                     if not exc.retryable:
                         raise
                     if (

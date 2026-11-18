@@ -12,6 +12,7 @@ import pytest
 
 from runpod_ci_broker.allocation import BoundedController, ExecutionPermit
 from runpod_ci_broker.discovery import SearchPolicy
+from runpod_ci_broker.export import ResultHTTPError
 from runpod_ci_broker.handover import ControllerJournal, GitHubEvidence
 from runpod_ci_broker.ledger import LedgerError, SQLiteStore
 from runpod_ci_broker.live import CreateHTTPError
@@ -449,12 +450,20 @@ def test_cancelled_waiting_task_cannot_reopen_its_search(allocation):
 def test_retryable_readiness_errors_obey_startup_deadline(allocation, monkeypatch):
     c, cloud = allocation
 
+    calls = []
+
+    def failing_logs(pod_id, timeout):
+        calls.append((pod_id, timeout))
+        raise OSError("PRIVATE_LOG")
+
+    monkeypatch.setattr(cloud, "startup_logs", failing_logs)
+
     class Reader:
         def __init__(self, *args):
             pass
 
         def readiness(self, *args):
-            raise ProviderError("result_not_ready", retryable=True)
+            raise ResultHTTPError(404, "readiness")
 
     monkeypatch.setattr("runpod_ci_broker.allocation.RunPodResultReader", Reader)
     c.start(confirmed=True)
@@ -462,7 +471,12 @@ def test_retryable_readiness_errors_obey_startup_deadline(allocation, monkeypatc
     r = c.collect()
     assert r["facts"]["pod_deleted_confirmed"] and not r["facts"]["results_saved"]
     assert cloud.now() - started <= c.task.limits.startup_seconds + 3
-    assert len(cloud.creates) == 1
+    assert len(cloud.creates) == 1 and calls == [("pod1", 3)]
+    assert r["startup_logs"]["status"] == "diagnostic_unavailable"
+    assert r["result_http_failures"][-1]["http_status"] == 404
+    assert r["startup_diagnostics"]["samples"][0]["pod_status"] == "RUNNING"
+    assert r["attempt_log"][-1]["allocation_confirmed_at"] == started
+    assert "PRIVATE_LOG" not in json.dumps(r)
 
 
 def test_collection_preserves_ledger_failure_for_independent_recovery(allocation, monkeypatch):
@@ -647,3 +661,20 @@ def test_recovery_upload_receipt_binds_new_exporter_without_changing_intent(
     r = recovery.cleanup()
     assert r["state"] == "ACCEPTED" and r["actions_run_id"] == "2468"
     assert r["artifact_receipt"]["run_id"] == "2469" and len(cloud.creates) == 1
+
+
+def test_cleanup_inventory_receives_only_remaining_monotonic_budget(allocation, monkeypatch):
+    import time
+
+    c, cloud = allocation
+    c.start(confirmed=True)
+    budgets = []
+
+    def inventory(deadline):
+        budgets.append(deadline - time.monotonic())
+        return set(cloud.pods)
+
+    monkeypatch.setattr(cloud, "active_ids", inventory)
+    assert c.cleanup()["facts"]["pod_deleted_confirmed"]
+    assert len(budgets) == 2
+    assert all(0 < remaining <= c.task.limits.cleanup_seconds for remaining in budgets)
