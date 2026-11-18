@@ -1,8 +1,8 @@
 {
-  "enabled": false,
+  "enabled": true,
   "task": {
-    "experiment_id": "broker-allocation-20261117-diverse",
-    "scope": "broker-bounded-smoke",
+    "experiment_id": "broker-allocation-20261118-recheck",
+    "scope": "broker-sealed-smoke-v1",
     "repository": "jasonjiang8866/runpod-ci-broker",
     "source_sha": "615cf130685fea1ba02173c8b153b4f66388a4c3",
     "image": "ghcr.io/jasonjiang8866/runpod-ci-broker-worker@sha256:968681add1078ad7ac9cd39d2887bd5b2948a9356c7eb1f2347af548d2d22291",
@@ -47,7 +47,7 @@
       "request_reserve_usd": 0.05,
       "cleanup_reserve_usd": 0.4,
       "cost_basis": "Estimate: 5 GB container disk at published USD 0.10/GB/month, rounded up to USD 0.001/hour; no Pod ingress/egress fees per provider docs. USD 0.50 additional reserve. Compute uses approved ceiling, refreshed catalog before creation. Not a supplier hard cap or invoice.",
-      "prior_spend_usd": 8.001502
+      "prior_spend_usd": 10.002002
     },
     "results": {
       "required_files": [
