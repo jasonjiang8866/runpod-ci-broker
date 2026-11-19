@@ -678,3 +678,212 @@ def test_cleanup_inventory_receives_only_remaining_monotonic_budget(allocation, 
     assert c.cleanup()["facts"]["pod_deleted_confirmed"]
     assert len(budgets) == 2
     assert all(0 < remaining <= c.task.limits.cleanup_seconds for remaining in budgets)
+
+
+def queue_run(c, cloud, *, latest=None, slots=1):
+    from runpod_ci_broker.batch import BatchCatalog, Offer
+    from runpod_ci_broker.queue import QueuePolicy
+    from runpod_ci_broker.queue_execution import QueuedExecution
+
+    run = QueuedExecution("offline-queue", c)
+    run.queue.initialize(
+        QueuePolicy(budget_microusd=5_000_000, opening_reserved_microusd=0, slots=slots)
+    )
+    run.queue.submit(c.task, latest_start=latest)
+    # Choose a different GPU from the single-task preference order.
+    catalog = BatchCatalog(
+        observed_at=int(cloud.now()),
+        complete=True,
+        offers=[
+            Offer(
+                gpu_id=c.task.gpu_allowlist[0],
+                data_center="DC-0",
+                memory_gb=32,
+                hourly_usd=0.5,
+                capacity="available",
+                cuda_versions=["13.2"],
+            )
+        ],
+    )
+    return run, catalog
+
+
+def recovery_for(run, cloud, completed=True):
+    from runpod_ci_broker.queue_execution import QueuedExecution
+
+    original = run.controller
+    identity = {
+        **IDENTITY,
+        "run_id": "9999",
+        "path": ".github/workflows/recover-allocation.yml",
+        "event": "workflow_run",
+    }
+    journal = ControllerJournal(
+        original.j.store,
+        original.task.scope,
+        original.task.experiment_id,
+        identity,
+        lambda previous: completed and previous == IDENTITY,
+        recovery=True,
+    )
+    controller = BoundedController(
+        original.task,
+        original.permit,
+        journal,
+        cloud,
+        cloud.read,
+        original.output,
+        now=cloud.now,
+        sleep=cloud.sleep,
+    )
+    return QueuedExecution(run.queue.name, controller)
+
+
+def test_queue_handoff_uses_fresh_selected_quote_and_preserves_reservation(allocation):
+    c, cloud = allocation
+    run, catalog = queue_run(c, cloud)
+    next_task = c.task.model_copy(update={"experiment_id": "next-smoke"})
+    run.queue.submit(next_task, priority=-1)
+    assert run.claim(catalog) == "claimed"
+    assert run.queue.claim(next_task.scope, next_task.experiment_id, "waiting") == "slots_full"
+    before = run.queue.status().reserved_microusd
+    assert run.start(confirmed=True)["state"] == "STARTING"
+    assert cloud.creates[0]["gpu"]["id"] == catalog.offers[0].gpu_id
+    assert cloud.creates[0]["dataCenterIds"] == ["DC-0"]
+    assert run.settle() == "cleanup_pending"
+    c.cleanup()
+    assert run.settle() == run.settle() == "verified_deleted"
+    assert run.queue.status().reserved_microusd == before
+    assert run.queue.claim(next_task.scope, next_task.experiment_id, "waiting") == "claimed"
+    with pytest.raises(LedgerError, match="queue_claim_closed"):
+        run.start(confirmed=True)
+    assert len(cloud.creates) == 1
+
+
+@pytest.mark.parametrize("failure", ["lost", "crash", "unknown", "delete_failed"])
+def test_queue_recovery_after_post_keeps_unknown_owned(allocation, failure):
+    c, cloud = allocation
+    run, catalog = queue_run(c, cloud)
+    run.claim(catalog)
+    cloud.outcomes = [failure]
+    if failure == "crash":
+        with pytest.raises(RuntimeError):
+            run.start(confirmed=True)
+    else:
+        run.start(confirmed=True)
+    if failure == "delete_failed":
+        cloud.delete = lambda *_: None
+    recover = recovery_for(run, cloud)
+    expected = "cleanup_pending" if failure in {"unknown", "delete_failed"} else "verified_deleted"
+    assert recover.recover() == expected
+    assert run.queue.status().slots_used == int(expected == "cleanup_pending")
+    assert len(cloud.creates) == 1
+
+
+def test_queue_claim_crash_before_journal_and_recovery_handover(allocation):
+    c, cloud = allocation
+    run, catalog = queue_run(c, cloud)
+    assert run.claim(catalog) == "claimed"
+    with pytest.raises(LedgerError, match="queue_launch_not_completed"):
+        recovery_for(run, cloud, completed=False).recover()
+    assert run.settle() == "awaiting_controller"
+    assert recovery_for(run, cloud).recover() == "no_create"
+    assert run.queue.status().slots_used == 0
+    with pytest.raises(LedgerError, match="queue_claim_closed"):
+        run.start(confirmed=True)
+    assert not cloud.creates
+
+
+@pytest.mark.parametrize("change", ["price", "site", "deadline", "stale_claim"])
+def test_queue_quote_change_and_expired_claim(allocation, change):
+    c, cloud = allocation
+    run, catalog = queue_run(c, cloud, latest=int(cloud.now()) + 2)
+    if change == "stale_claim":
+        catalog.observed_at -= 31
+        assert run.claim(catalog) == "catalog_observation_stale"
+        assert run.queue.status().slots_used == 0
+        return
+    if change == "price":
+        catalog.offers[0].hourly_usd = 0.4
+    elif change == "site":
+        catalog.offers[0].data_center = "other-site"
+    run.claim(catalog)
+    if change == "deadline":
+        cloud.sleep(2)
+    r = run.start(confirmed=True)
+    assert r["state"] in {"TIMED_OUT", "PREFLIGHT_BLOCKED"}
+    assert run.settle() == "no_create"
+    assert not cloud.creates
+
+
+def test_queue_classified_capacity_refusal_can_choose_another_gpu(allocation):
+    c, cloud = allocation
+    run, catalog = queue_run(c, cloud)
+    run.claim(catalog)
+    cloud.outcomes = ["capacity", "ok"]
+    r = run.start(confirmed=True)
+    assert r["state"] == "STARTING"
+    assert [a["outcome"] for a in r["attempt_log"]] == ["capacity_refused", "acknowledged"]
+    assert len({p["gpu"]["id"] for p in cloud.creates}) == 2
+
+
+def test_two_queued_jobs_accept_and_hand_off_one_slot(allocation, monkeypatch):
+    from runpod_ci_broker.queue_execution import QueuedExecution
+
+    c, cloud = allocation
+    first, catalog = queue_run(c, cloud)
+    task = c.task.model_copy(update={"experiment_id": "second-smoke"})
+    auth = c.permit.authorization.model_copy(
+        update={"experiment_id": task.experiment_id, "config_fingerprint": task.fingerprint()}
+    )
+    journal = ControllerJournal(c.j.store, task.scope, task.experiment_id, IDENTITY, lambda _: True)
+    second = QueuedExecution(
+        first.queue.name,
+        BoundedController(
+            task,
+            c.permit.model_copy(update={"authorization": auth}),
+            journal,
+            cloud,
+            cloud.read,
+            c.output.parent / "second",
+            now=cloud.now,
+            sleep=cloud.sleep,
+        ),
+    )
+    first.queue.submit(task, priority=-1)
+    assert first.claim(catalog) == "claimed"
+    assert second.claim(catalog) == "slots_full"
+    for run in [first, second]:
+        if run is second:
+            catalog.observed_at = int(cloud.now())
+            assert run.claim(catalog) == "claimed"
+        assert run.start(confirmed=True)["state"] == "STARTING"
+        controller = run.controller
+        github = export_fixture(controller, cloud, monkeypatch)
+        assert controller.collect()["state"] == "COLLECTED"
+        controller.receipt("123", "d" * 64, github)
+        assert controller.cleanup()["state"] == "ACCEPTED"
+        assert run.settle() == "verified_deleted"
+        status = run.queue.status().entries[run.key].execution_status
+        assert status["state"] == "ACCEPTED" and status["worker_readiness"] == "ready"
+    assert not cloud.pods and cloud.deletes == ["pod1", "pod2"]
+
+
+def test_queue_recovers_crash_after_durable_absence(allocation, monkeypatch):
+    c, cloud = allocation
+    run, catalog = queue_run(c, cloud)
+    run.claim(catalog)
+    run.start(confirmed=True)
+
+    def crash(_):
+        raise RuntimeError("runner lost before finalization")
+
+    monkeypatch.setattr(c, "_finish_cleanup", crash)
+    with pytest.raises(RuntimeError):
+        c.cleanup()
+    assert c.j.read()["state"] == "ACCEPTING" and run.queue.status().slots_used == 1
+    confirmed_at = c.j.read()["deleted_confirmed_at"]
+    cloud.sleep(300)
+    assert recovery_for(run, cloud).recover() == "verified_deleted"
+    assert c.j.read()["deleted_confirmed_at"] == confirmed_at
+    assert cloud.deletes == ["pod1"] and c.j.read()["state"] == "REJECTED"

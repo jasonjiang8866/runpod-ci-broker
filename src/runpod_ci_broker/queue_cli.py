@@ -88,6 +88,7 @@ def main() -> int:
                                 "experiment_id": e.task.experiment_id,
                                 "outcome": state.reason(e, now),
                                 "owner": e.owner,
+                                "execution_status": e.execution_status,
                                 "incremental_microusd": e.incremental_microusd,
                             }
                             for e in state.entries.values()

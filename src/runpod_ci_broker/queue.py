@@ -30,6 +30,17 @@ class QueuePolicy(Model):
         return self
 
 
+class Dispatch(Model):
+    queue_name: Identifier
+    snapshot_id: str
+    gpu_id: str
+    data_center: Identifier
+    hourly_microusd: Amount
+    permit_digest: str
+    launch_identity: dict[str, str | int]
+    latest_start: Amount | None
+
+
 class Entry(Model):
     task: Task
     priority: int
@@ -37,6 +48,13 @@ class Entry(Model):
     latest_start: Amount | None
     incremental_microusd: Amount
     owner: Identifier | None
+    dispatch: Dispatch | None = Field(default=None, exclude_if=lambda v: v is None)
+    release: Literal["verified_deleted", "no_create"] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    execution_status: dict[str, str | bool] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
 
 
 def task_key(scope: str, experiment_id: str) -> str:
@@ -60,7 +78,7 @@ class QueueState(Model):
 
     @property
     def slots_used(self) -> int:
-        return sum(e.owner is not None for e in self.entries.values())
+        return sum(e.owner is not None and e.release is None for e in self.entries.values())
 
     @property
     def reserved_microusd(self) -> int:
@@ -71,6 +89,14 @@ class QueueState(Model):
     @model_validator(mode="after")
     def verify(self) -> Self:
         for key, entry in self.entries.items():
+            if entry.dispatch and (
+                entry.owner != digest(entry.dispatch.launch_identity)
+                or entry.dispatch.queue_name != self.name
+                or entry.dispatch.latest_start != entry.latest_start
+            ):
+                raise ValueError("queue_dispatch_invalid")
+            if entry.release and not entry.dispatch:
+                raise ValueError("queue_release_invalid")
             if key != task_key(entry.task.scope, entry.task.experiment_id) or (
                 entry.incremental_microusd != reservation(entry.task, self.policy)
             ):
@@ -83,6 +109,8 @@ class QueueState(Model):
         return self
 
     def reason(self, entry: Entry, now: int) -> str:
+        if entry.release:
+            return entry.release
         if entry.owner is not None:
             return "already_claimed"
         if entry.latest_start is not None and now >= entry.latest_start:
