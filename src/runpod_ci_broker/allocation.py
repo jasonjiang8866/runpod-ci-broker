@@ -27,9 +27,18 @@ from .ledger import LedgerError
 from .lifecycle import owner
 from .live import CreateHTTPError
 from .models import Authorization, Candidate, Model, Nonnegative, Positive, Sha, Task
-from .optimization import PlacementSolver, RankedFirstSolver, digest, microusd
+from .optimization import (
+    Assignment,
+    PlacementSolver,
+    PlanningProblem,
+    RankedFirstSolver,
+    SolverResult,
+    digest,
+    microusd,
+)
 from .planner import authorize, estimate, plan, reasons
 from .provider import ProviderError, ReadOnlyRunPod
+from .queue import Dispatch
 from .results import validate_manifest, verify_saved
 from .startup import capture_startup_logs
 from .transport_diagnostics import record_startup
@@ -113,6 +122,28 @@ class AttemptCleanup(CleanupClient):
         if remaining <= 0:
             raise ProviderError("cleanup_deadline")
         return self.c.api.active_ids(time.monotonic() + remaining)
+
+
+class _FirstQueuedPlacement:
+    name = "queued-first-placement-v1"
+
+    def __init__(self, dispatch: Dispatch):
+        self.dispatch = dispatch
+
+    def solve(self, problem: PlanningProblem, *, time_limit_ms: int) -> SolverResult:
+        (job,) = problem.jobs
+        chosen = next(
+            (
+                option
+                for option in job.options
+                if option.gpu_id == self.dispatch.gpu_id
+                and option.data_center == self.dispatch.data_center
+                and option.hourly_microusd <= self.dispatch.hourly_microusd
+            ),
+            None,
+        )
+        assignments = (Assignment(job.key, chosen.key),) if chosen else ()
+        return SolverResult(problem.snapshot_id, "feasible" if chosen else "deferred", assignments)
 
 
 class BoundedController:
@@ -287,11 +318,34 @@ class BoundedController:
             raise ProviderError("allocation_search_deadline")
         return result
 
-    def start(self, *, confirmed: bool = False) -> dict[str, Any]:
+    def start(
+        self,
+        *,
+        confirmed: bool = False,
+        queue_dispatch: Callable[[], Dispatch] | None = None,
+    ) -> dict[str, Any]:
         if not confirmed or self.j.recovery or self.j.identity["event"] != "workflow_dispatch":
             raise ValueError("explicit_manual_allocation_required")
         with self.j.lock():
-            r = self.record() if self.j.read() is not None else self.new_record()
+            # Read the durable queue claim under the journal lock shared with settlement.
+            dispatch = queue_dispatch() if queue_dispatch else None
+            if dispatch:
+                _, scope = self.j.owned()
+                existing = scope["records"].get(self.task.experiment_id)
+            else:
+                existing = self.j.read()
+            if existing is None:
+                r = self.new_record()
+                if dispatch:
+                    r["allocation"]["queue_dispatch"] = dispatch.model_dump()
+            else:
+                r = self.record()
+                if dispatch and r != existing:
+                    raise LedgerError("queue_journal_mismatch")
+                if r["allocation"].get("queue_dispatch") != (
+                    dispatch.model_dump() if dispatch else None
+                ):
+                    raise ValueError("queue_dispatch_mismatch")
             if r.get("cancelled"):
                 return r
             if r["create_intent"]:
@@ -329,8 +383,12 @@ class BoundedController:
                     self.policy,
                     history,
                     self.clock(r),
-                    solver=self.solver,
+                    solver=_FirstQueuedPlacement(dispatch)
+                    if dispatch and not r["attempts"]
+                    else self.solver,
                 )
+                if dispatch and not r["attempts"] and "solver_deferred" in report["blockers"]:
+                    report["blockers"].append("queue_placement_unavailable")
                 report["mode"] = "live"
                 r.update(report)
                 r["paid_authorized"] = bool(r["attempts"])
@@ -365,6 +423,7 @@ class BoundedController:
                             b.startswith("solver_")
                             or b
                             in {
+                                "queue_placement_unavailable",
                                 "scope_inventory_unverified_or_active",
                                 "registry_access_unverified",
                             }
@@ -429,8 +488,10 @@ class BoundedController:
 
     def fresh(self, r: dict[str, Any]) -> bool:
         at = self.clock(r)
+        latest = (r["allocation"].get("queue_dispatch") or {}).get("latest_start")
         return bool(
-            self.permit.window_start
+            (latest is None or at < latest)
+            and self.permit.window_start
             <= at
             < min(r["candidate_valid_until"], r["allocation"]["search_deadline"])
             and at + self.cost["seconds_per_attempt"] <= self.permit.window_end
@@ -791,8 +852,10 @@ class BoundedController:
     def cleanup(self) -> dict[str, Any]:
         with self.j.lock():
             r = self.record()
-            if not r["create_intent"] or r["facts"]["pod_deleted_confirmed"]:
+            if not r["create_intent"]:
                 return r
+            if r["facts"]["pod_deleted_confirmed"]:
+                return self._finish_cleanup(r)
             try:
                 self.adopt(r)
             except ProviderError as exc:
@@ -809,21 +872,24 @@ class BoundedController:
         )
         with self.j.lock():
             r = self.record()
-            if r["facts"]["pod_deleted_confirmed"]:
-                r["deleted_confirmed_at"] = self.now()
-                if r["allocation"]["observed_max_hourly_usd"] is not None:
-                    r["allocation"]["estimated_compute_usd"] = (
-                        max(0, self.now() - r["attempt_log"][-1]["at"])
-                        / 3600
-                        * r["allocation"]["observed_max_hourly_usd"]
-                    )
-                r["facts"]["task_completed"] = True
-                self.save(
-                    r,
-                    "ACCEPTED"
-                    if r["facts"]["results_saved"]
-                    and r["facts"]["experiment_passed"]
-                    and not r.get("cancelled")
-                    else "REJECTED",
+            return self._finish_cleanup(r)
+
+    def _finish_cleanup(self, r: dict[str, Any]) -> dict[str, Any]:
+        if r["facts"]["pod_deleted_confirmed"] and not r["facts"]["task_completed"]:
+            confirmed_at = r.get("deleted_confirmed_at")
+            if confirmed_at is not None and r["allocation"]["observed_max_hourly_usd"] is not None:
+                r["allocation"]["estimated_compute_usd"] = (
+                    max(0, confirmed_at - r["attempt_log"][-1]["at"])
+                    / 3600
+                    * r["allocation"]["observed_max_hourly_usd"]
                 )
-            return r
+            r["facts"]["task_completed"] = True
+            self.save(
+                r,
+                "ACCEPTED"
+                if r["facts"]["results_saved"]
+                and r["facts"]["experiment_passed"]
+                and not r.get("cancelled")
+                else "REJECTED",
+            )
+        return r

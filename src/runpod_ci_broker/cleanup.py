@@ -183,6 +183,9 @@ def cleanup_owned(
                     ids = api.active_ids(deadline)
                     absent = absent + 1 if pod_id not in ids else 0
                     if absent >= 2:
+                        if "allocation" in r:
+                            # Bounded allocations pass their UTC lifecycle clock here.
+                            r["deleted_confirmed_at"] = now()
                         r["facts"]["pod_deleted_confirmed"] = True
                         r["state"] = "ACCEPTING"
                         r["cleanup_verification"] = "direct_404_and_complete_inventory_twice"

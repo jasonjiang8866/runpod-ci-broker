@@ -205,6 +205,11 @@ def batch_plan(replay: BatchReplay) -> dict[str, Any]:
 
     jobs: list[PlanningJob] = []
     details: dict[str, dict[str, Any]] = {}
+    active_targets = {
+        (e.dispatch.gpu_id, e.dispatch.data_center)
+        for e in state.entries.values()
+        if e.dispatch and not e.release
+    }
     for key, entry in sorted(state.entries.items()):
         eligibility = state.reason(entry, now)
         exclusions: list[dict[str, Any]] = []
@@ -217,6 +222,21 @@ def batch_plan(replay: BatchReplay) -> dict[str, Any]:
             blockers = [snapshot_blocker]
         else:
             options, blockers, exclusions = _options(entry, catalog.offers, now)
+            available = []
+            for option in options:
+                if (option.gpu_id, option.data_center) in active_targets:
+                    exclusions.append(
+                        {
+                            "gpu_id": option.gpu_id,
+                            "data_center": option.data_center,
+                            "reasons": ["placement_claimed"],
+                        }
+                    )
+                else:
+                    available.append(option)
+            if options and not available:
+                blockers = ["placement_claimed"]
+            options = tuple(available)
         jobs.append(PlanningJob(key, options))
         details[key] = {
             "experiment_id": entry.task.experiment_id,
