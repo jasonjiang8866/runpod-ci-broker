@@ -98,7 +98,30 @@ queue status
 `status` 查询持久状态。槽满、预算不足和截止时间已过分别有独立原因。
 
 当前 CLI 只操作共享本地文件。领取在重启后仍占槽；后续执行接入将以清理证据
-释放槽位。下一步是在同一快照上为多个排队任务选择候选。
+释放槽位。
+
+#### M2 第二个交付：多任务选卡与 FIFO 重放
+
+`queue plan` 在一个时间点读取队列和一份离线库存，输出两套建议及逐任务理由。
+使用上一节的 `queue` 函数，在领取任务前可运行：
+
+```bash
+jq --argjson ts "$(date +%s)" '{observed_at: $ts, complete: true, offers: .}' examples/mock-catalog.json > /tmp/broker-catalog.json
+queue plan --catalog /tmp/broker-catalog.json --save-replay /tmp/broker-replay.json
+queue replay --input /tmp/broker-replay.json
+```
+
+报价使用 UTC Unix 秒，沿用默认 30 秒有效期。未完成、未来或过期的报价会延后分配。
+每个任务先按硬约束和价格上限过滤。有效优先级为提交优先级加每等待 60 秒所得的一分，
+同分时先安排可选机房与卡型组合较少的任务，再比较入队时间和任务键。对同一任务优先
+选择后续任务竞争较少的候选，竞争数相同时沿用库存等级、GPU 偏好和价格排序。
+一轮内每个 GPU 型号和机房组合最多建议一次，HIGH/LOW 只参与排序。队列中的已领取任务
+继续占用槽位和费用预留。涉及持久卷或私有镜像凭据的任务需要独立兼容性证据。
+
+三个合成任务分别为偏好 5090 的灵活任务、5090 专用任务以及 3090 专用任务。
+在同一批 4090、5090、3090 报价和三个槽位下，FIFO 提出两个分配，新策略提出三个。
+报告含所有建议、候选排序及拒绝理由，重放包保留完整任务配置、队列账本、库存与决策时间。
+上述结果为离线建议数量。实际创建、报价再验证和清理后释放槽位属于下一阶段。
 
 ### M3：可选优化器与实验设计
 
@@ -116,8 +139,8 @@ queue status
 
 `optimization.py` 提供 `PlanningProblem`、`PlanningJob`、`PlacementOption`、
 `SolverResult` 和 `PlacementSolver.solve(problem, time_limit_ms=...)`。
-问题可表达多任务、统一费用上限和分配槽数，但当前入口只构造一个任务；
-`RankedFirstSolver` 明确拒绝批量问题，没有实现多任务调度或 MILP。
+单任务执行路径使用 `RankedFirstSolver`。离线队列以可用预算、剩余槽位及多任务候选
+构造同一类型的规划问题，交给 `BatchSolver` 生成建议。可选 MILP 适配器属于 M3。
 
 金额使用整数 micro-USD，保守向上取整。当前候选预留费用仍使用已有的“全部
 允许尝试按价格上限预留”估计。M2 将由统一账本提供扣除已有承诺后的预算，

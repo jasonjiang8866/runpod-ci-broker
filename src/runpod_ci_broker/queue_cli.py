@@ -8,8 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from pydantic import ValidationError
-
+from .batch import BatchCatalog, BatchReplay, batch_plan
 from .ledger import LedgerError, SQLiteStore
 from .models import Task
 from .queue import QueuePolicy, TaskQueue
@@ -33,8 +32,21 @@ def main() -> int:
     claim.add_argument("--experiment-id", required=True)
     claim.add_argument("--owner", required=True)
     commands.add_parser("status")
+    plan = commands.add_parser("plan")
+    plan.add_argument("--catalog", type=Path, required=True)
+    plan.add_argument(
+        "--save-replay", type=Path, help="write the queue, quote and decision time for replay"
+    )
+    replay = commands.add_parser("replay")
+    replay.add_argument("--input", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if args.command == "replay":
+            saved = BatchReplay.model_validate_json(args.input.read_text())
+            if saved.queue.name != args.queue:
+                raise LedgerError("queue_replay_name_mismatch")
+            print(json.dumps(batch_plan(saved)))
+            return 0
         queue = TaskQueue(SQLiteStore(args.db), args.queue)
         if args.command == "init":
             queue.initialize(
@@ -50,6 +62,15 @@ def main() -> int:
             outcome = queue.submit(task, priority=args.priority, latest_start=args.latest_start)
         elif args.command == "claim":
             outcome = queue.claim(args.scope, args.experiment_id, args.owner)
+        elif args.command == "plan":
+            catalog = BatchCatalog.model_validate_json(args.catalog.read_text())
+            saved = BatchReplay(queue=queue.status(), catalog=catalog, planned_at=int(time.time()))
+            report = batch_plan(saved)
+            if args.save_replay:
+                with args.save_replay.open("x") as output:
+                    output.write(saved.model_dump_json())
+            print(json.dumps(report))
+            return 0
         else:
             state = queue.status()
             now = int(time.time())
@@ -79,7 +100,7 @@ def main() -> int:
         return int(args.command == "claim" and outcome != "claimed")
     except LedgerError as exc:
         print(json.dumps({"error": str(exc)}))
-    except (OSError, sqlite3.Error, ValidationError):
+    except (OSError, sqlite3.Error, ValueError):
         print(json.dumps({"error": "queue_input_or_storage_invalid"}))
     return 2
 
