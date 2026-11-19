@@ -1,0 +1,46 @@
+name: Recover queued GPU pair
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_cleanup:
+        description: Reconcile and terminate only the two reviewed queue tasks; never create
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: [Two queued GPU smokes]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: broker-approved-campaign
+  cancel-in-progress: false
+jobs:
+  controller:
+    if: github.repository == 'jasonjiang8866/runpod-ci-broker' && github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.confirm_cleanup) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.path == '.github/workflows/queue-smoke.yml'))
+    permissions:
+      contents: write
+      actions: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RCB_LEDGER_TOKEN: ${{ github.token }}
+      RCB_CONFIRM_CLEANUP: ${{ inputs.confirm_cleanup }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Prepare runner-local evidence encryption
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.sealed
+      - name: Recover owned queue tasks and verify released slots
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.queue_workflow recover
