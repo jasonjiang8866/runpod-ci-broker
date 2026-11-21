@@ -819,13 +819,14 @@ class BoundedController:
                 (path / "manifest.json").read_bytes()
             ).hexdigest() != r.get("manifest_sha256"):
                 raise ValueError("verified_bundle_required")
+            suffix = "-" + self.task.experiment_id if r["allocation"].get("queue_dispatch") else ""
             meta = github.get("/actions/artifacts/" + artifact_id)
             if (
                 meta.get("id") != int(artifact_id)
                 or meta.get("expired") is not False
                 or meta.get("digest") != "sha256:" + sha256
                 or meta.get("name")
-                != f"allocation-bundle-{self.j.identity['run_id']}-{self.j.identity['attempt']}"
+                != f"allocation-bundle-{self.j.identity['run_id']}-{self.j.identity['attempt']}{suffix}"
                 or meta.get("workflow_run", {}).get("id") != int(self.j.identity["run_id"])
                 or meta.get("workflow_run", {}).get("head_sha") != self.j.identity["sha"]
             ):

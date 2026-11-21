@@ -20,6 +20,8 @@ WORKFLOWS = {
     ".github/workflows/gpu-smoke.yml",
     ".github/workflows/recover-smoke.yml",
     ".github/workflows/allocation-smoke.yml",
+    ".github/workflows/queue-smoke.yml",
+    ".github/workflows/recover-queue.yml",
     ".github/workflows/recover-allocation.yml",
 }
 
@@ -43,7 +45,7 @@ def context() -> dict[str, Any]:
     if event not in {"workflow_dispatch", "workflow_run"}:
         raise LedgerError("trusted_controller_event_required")
     if (
-        paths[0].endswith(("gpu-smoke.yml", "allocation-smoke.yml"))
+        paths[0].endswith(("gpu-smoke.yml", "allocation-smoke.yml", "queue-smoke.yml"))
         and event != "workflow_dispatch"
     ):
         raise LedgerError("manual_launch_required")

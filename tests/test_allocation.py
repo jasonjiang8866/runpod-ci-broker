@@ -389,7 +389,12 @@ def export_fixture(c, cloud, monkeypatch):
             "id": 123,
             "expired": False,
             "digest": "sha256:" + "d" * 64,
-            "name": "allocation-bundle-2468-1",
+            "name": "allocation-bundle-2468-1"
+            + (
+                "-" + c.task.experiment_id
+                if (c.j.read() or {}).get("allocation", {}).get("queue_dispatch")
+                else ""
+            ),
             "workflow_run": {"id": 2468, "head_sha": IDENTITY["sha"]},
         },
     )
@@ -887,3 +892,70 @@ def test_queue_recovers_crash_after_durable_absence(allocation, monkeypatch):
     assert recovery_for(run, cloud).recover() == "verified_deleted"
     assert c.j.read()["deleted_confirmed_at"] == confirmed_at
     assert cloud.deletes == ["pod1"] and c.j.read()["state"] == "REJECTED"
+
+
+def test_paid_queue_job_entrypoints_and_independent_recovery(allocation, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from runpod_ci_broker import queue_workflow as workflow
+    from runpod_ci_broker.ledger import SQLiteStore
+    from runpod_ci_broker.queue import TaskQueue
+    from runpod_ci_broker.sealed import SealedStore, key_file
+
+    template, cloud = allocation
+    identity = {**IDENTITY, "path": workflow.LAUNCH}
+    raw = SQLiteStore(tmp_path / "pair.db")
+    store = SealedStore(raw)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    key_file().write_bytes(b"x" * 32)
+    monkeypatch.setenv("RCB_CONFIRM_PAID", "true")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary"))
+    monkeypatch.setattr(workflow, "MANIFEST", Path("examples/allocation-smoke.json").resolve())
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(workflow, "verify_parent", lambda *args: None)
+    monkeypatch.setattr(workflow, "time", SimpleNamespace(time=cloud.now, monotonic=lambda: 0))
+    monkeypatch.setattr(workflow, "LiveAPI", lambda **kwargs: cloud)
+    monkeypatch.setattr(workflow, "Transport", lambda **kwargs: SimpleNamespace(get=cloud.read))
+    monkeypatch.setattr(workflow, "TaskQueue", lambda *a: TaskQueue(*a, clock=cloud.now))
+    monkeypatch.setattr(
+        workflow,
+        "BoundedController",
+        lambda *a, **kw: BoundedController(*a, **kw, now=cloud.now, sleep=cloud.sleep),
+    )
+    # Exercise the real CUDA result bundle verifier with a synthetic worker and artifact service.
+    github = export_fixture(template, cloud, monkeypatch)
+    monkeypatch.setattr(github, "completed", lambda previous: previous == identity)
+    cloud.task = workflow.tasks()["first"]
+
+    def step(action, label="first", who=identity):
+        return workflow.run(action, label, who, raw, store, github)
+
+    assert step("prepare") == 0
+    with pytest.raises(ValueError, match="first_task_not_accepted"):
+        step("start", "second")
+    for index, label in enumerate(workflow.LABELS):
+        assert step("prepare", label) == step("start", label) == step("collect", label) == 0
+        task = workflow.tasks()[label]
+        artifact = {
+            "id": index + 1,
+            "expired": False,
+            "digest": "sha256:" + "d" * 64,
+            "name": f"allocation-bundle-2468-1-{task.experiment_id}",
+            "workflow_run": {"id": 2468, "head_sha": IDENTITY["sha"]},
+        }
+        monkeypatch.setenv("RCB_ARTIFACT_ID", str(index + 1))
+        monkeypatch.setenv("RCB_ARTIFACT_DIGEST", "d" * 64)
+        monkeypatch.setattr(github, "get", lambda _, artifact=artifact: artifact)
+        if label == "second":
+            artifact["name"] = artifact["name"].replace("second", "first")
+            with pytest.raises(ValueError, match="artifact_receipt_unverified"):
+                step("receipt", label)
+            artifact["name"] = artifact["name"].replace("first", "second")
+        assert step("receipt", label) == step("cleanup", label) == step("report", label) == 0
+    state = TaskQueue(store, workflow.QUEUE).status()
+    assert state.reserved_microusd == 16_003_502 and state.slots_used == 0
+    with pytest.raises(ValueError, match="campaign_already_bound"):
+        step("prepare", who={**identity, "run_id": "5678"})
+    monkeypatch.setenv("RCB_CONFIRM_CLEANUP", "true")
+    assert step("recover", who={**identity, "run_id": "5678", "path": workflow.RECOVERY}) == 0
+    assert len(cloud.creates) == 2 and not cloud.pods

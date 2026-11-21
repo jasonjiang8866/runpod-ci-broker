@@ -189,3 +189,23 @@ The [November 17 run](allocation-regression-20261117.md) exercised capacity
 fallback and reached a PRO 6000 Server whose worker failed to become ready.
 The RTX 4090 run verifies the successful lifecycle. The cause of the earlier
 PRO 6000 startup failure and the rental success rate across regions remain open.
+
+## Two-task queue acceptance
+
+`queue-smoke.yml` runs two fixed CUDA memory smokes in one queue with one slot.
+Manual dispatch on main requires `confirm_paid=true`. The runner checks the
+previous scoped acceptance and carries forward USD 12.002502 and 9000 lifecycle
+seconds. Each new task can reserve USD 2.000500 and 1800 lifecycle seconds for
+up to three attempts. Together they bring the campaign reservation to USD
+16.003502 and 12600 seconds. The two tasks share one 30-minute dispatch window
+and the global Secure Cloud GPU allowlist. The release image and source are
+pinned to the November 18 accepted worker.
+
+Both tasks enter the persistent queue before launch. The second must observe
+`slots_full` during the first claim. It can start after the first task has
+reached ACCEPTED and released its slot with verified deletion. Each task has
+a separate encrypted result artifact and receipt. The job summaries include
+the observed GPU, attempt count, estimated compute cost and deletion status.
+After the launch run, `recover-queue.yml` reconciles only the original campaign.
+It checks slot settlement and the provider inventory for remaining scoped Pods.
+The fixed campaign identity prevents another dispatch from resetting the budget.

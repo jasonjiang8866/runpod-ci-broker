@@ -1,0 +1,91 @@
+name: Two queued GPU smokes
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_paid:
+        description: Run two sequential CUDA smokes in the existing USD 20 campaign
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: broker-approved-campaign
+  cancel-in-progress: false
+jobs:
+  first:
+    if: &manual github.repository == 'jasonjiang8866/runpod-ci-broker' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm_paid
+    permissions: &permissions
+      contents: write
+      actions: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RCB_LEDGER_TOKEN: ${{ github.token }}
+      RCB_CONFIRM_PAID: ${{ inputs.confirm_paid }}
+      TASK: first
+    steps: &steps
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Prepare evidence encryption
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.sealed
+      - name: Check campaign admission and verify pinned worker
+        id: admission
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/queue-anonymous-docker
+        run: |
+          set -euo pipefail
+          uv run --locked python -m runpod_ci_broker.queue_workflow prepare --task "$TASK"
+          IMAGE=$(uv run --locked python -c 'from runpod_ci_broker.queue_workflow import IMAGE; print(IMAGE)')
+          SOURCE=$(uv run --locked python -c 'from runpod_ci_broker.queue_workflow import SOURCE; print(SOURCE)')
+          docker pull "$IMAGE"
+          test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE"
+      - name: Claim and start
+        id: launch
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.queue_workflow start --task "$TASK"
+      - name: Collect and encrypt
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.queue_workflow collect --task "$TASK"
+      - name: Upload task result
+        id: bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: allocation-bundle-${{ github.run_id }}-${{ github.run_attempt }}-broker-queue-pair-20261119-${{ github.job }}
+          path: out/queue/${{ github.job }}/bundle.enc
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify task-specific upload receipt
+        env:
+          RCB_ARTIFACT_ID: ${{ steps.bundle.outputs.artifact-id }}
+          RCB_ARTIFACT_DIGEST: ${{ steps.bundle.outputs.artifact-digest }}
+        run: uv run --locked python -m runpod_ci_broker.queue_workflow receipt --task "$TASK"
+      - name: Clean up owned compute and settle
+        if: always() && steps.admission.outcome == 'success'
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked python -m runpod_ci_broker.queue_workflow cleanup --task "$TASK"
+      - name: Require verified acceptance
+        if: always() && steps.admission.outcome == 'success'
+        run: uv run --locked python -m runpod_ci_broker.queue_workflow report --task "$TASK"
+  second:
+    needs: first
+    if: *manual
+    permissions: *permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RCB_LEDGER_TOKEN: ${{ github.token }}
+      RCB_CONFIRM_PAID: ${{ inputs.confirm_paid }}
+      TASK: second
+    steps: *steps
