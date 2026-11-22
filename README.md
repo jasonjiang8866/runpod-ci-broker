@@ -1,7 +1,6 @@
 # RunPod CI Broker
 
-A small Python CLI for **bounded, explainable RunPod GPU experiments driven by
-GitHub Actions**. It separates experiment requirements from cloud placement,
+A Python CLI for **finding and renting GPUs on RunPod and DigitalOcean through GitHub Actions**. It separates experiment requirements from cloud placement,
 budgets, recovery and cleanup. MIT licensed; Python 3.12+; managed with uv.
 
 **A core goal is to help users find rentable GPUs:** search across eligible models
@@ -52,7 +51,7 @@ records and reservations are retained, and reruns never create another Pod.
 - Separate process success, experiment acceptance, verified artifacts and confirmed Pod deletion.
 - Bound waiting, retries and collection. Preserve diagnostics when recovery fails.
 
-Paid execution currently uses RunPod Pods and GitHub Actions. No multi-cloud layer, local GPU routing,
+Workload execution uses RunPod Pods. The DigitalOcean pilot provisions and deletes a GPU Droplet. No local GPU routing,
 self-hosted runner scheduling, Kubernetes, web console, SaaS, automatic top-ups,
 unlimited retries or autoscaling. It never modifies account billing or creates,
 deletes or resizes Network/Global Volumes. It contains no project-specific ML logic.
@@ -73,7 +72,45 @@ The second simulates the lifecycle; **it does not execute the configured program
 Example metrics and prices are fictional fixtures, not benchmark findings or quotes.
 Without `--mock-catalog`, dry-run is strictly offline and marks availability unknown.
 
-## DigitalOcean GPU inventory
+## Global GPU offers and DigitalOcean rentals
+
+Compare exact GPU variants across all advertised regions. The default profile
+requests one GPU with an inclusive **USD 5 per GPU-hour** ceiling. The report
+shows both the unit and full-instance hourly prices, the provider's capacity
+signal, exclusions and any incomplete provider reads.
+
+```bash
+uv run runpod-ci-broker --action offers --config examples/global-gpu-market.json
+uv run runpod-ci-broker --action offers --config examples/global-gpu-market.json --provider digitalocean
+```
+
+The manual **Global GPU offers** workflow uses the repository's existing
+`DIGITALOCEAN_ACCESS_TOKEN` and `RUNPOD_API_KEY`. It saves `out/offers.json`.
+RunPod Secure Cloud reports placement stock. DigitalOcean on-demand reports
+regions where a size is offered. Both can refuse a subsequent allocation.
+Spot capacity is available separately below.
+
+**DigitalOcean GPU rental** is a manual, main-only provisioning pilot. It
+refreshes global H100/H200 single-GPU offers before each attempt. On a
+definitive capacity refusal it tries another eligible placement, preferring
+a different region, up to three attempts. Ambiguous creates go to recovery.
+The pilot waits for Droplet status `active`, then deletes and verifies
+absence by ID and complete tag inventory twice. The companion recovery
+workflow can repeat cleanup after the launch runner exits.
+
+For a paid pilot, use the existing `DIGITALOCEAN_ACCESS_TOKEN` with team account and
+size reads, Droplet creation/read/deletion, tag creation/read and SSH key
+read. The pilot uses the sole existing team SSH key automatically. If the team has multiple keys, set repository variable `DO_SSH_KEY_ID` to the intended key.
+Keep the existing campaign's journal encryption key available. Select
+`confirm_paid` only when ready to spend. The single-use reservation carries
+forward USD 16.003502 and adds USD 1.75 and 900 seconds within the existing
+USD 20 / 18,000-second campaign. Provider charges can continue until deletion
+succeeds. Recovery preserves unresolved intent. An operator can rerun
+**Recover DigitalOcean GPU rental** with the same team's working credential.
+CUDA worker execution and artifact receipt on Droplets await a separate
+integration. [DigitalOcean custom API scopes](https://docs.digitalocean.com/reference/api/scopes/).
+
+## DigitalOcean Spot GPU inventory
 
 Run `uv run python -m runpod_ci_broker.do_spot` for a credential-free JSON
 snapshot of the [official hourly Spot capacity table](https://docs.digitalocean.com/products/droplets/details/spot-gpu-capacity/).
@@ -85,7 +122,7 @@ exits nonzero. This command can run independently of the RunPod controller.
 For on-demand plans, the [regional catalog](https://docs.digitalocean.com/products/droplets/details/gpu-availability/)
 lists supported locations. The [Sizes API](https://docs.digitalocean.com/reference/api/reference/sizes/)
 accepts `gpu_minimum=1` for an authenticated catalog query. Plan availability
-does not reserve a GPU. DigitalOcean paid allocation and cleanup are pending.
+does not reserve a GPU. The on-demand rental pilot uses the authenticated catalog.
 
 ## Adaptive resource discovery
 

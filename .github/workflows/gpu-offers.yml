@@ -1,0 +1,30 @@
+name: Global GPU offers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offers:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.13.5'
+          enable-cache: false
+      - run: uv sync --locked --no-dev --python 3.12
+      - name: Compare global on-demand catalogs
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: uv run --locked runpod-ci-broker --action offers --config examples/global-gpu-market.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: global-gpu-offers
+          path: out/offers.json
+          if-no-files-found: error

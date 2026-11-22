@@ -17,6 +17,8 @@ from .ledger import LedgerError, SharedJournal, Store
 from .provider import NoRedirect
 
 WORKFLOWS = {
+    ".github/workflows/do-rental.yml",
+    ".github/workflows/recover-do-rental.yml",
     ".github/workflows/gpu-smoke.yml",
     ".github/workflows/recover-smoke.yml",
     ".github/workflows/allocation-smoke.yml",

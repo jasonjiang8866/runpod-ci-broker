@@ -16,6 +16,8 @@ from .discovery import ResourceFinder, SearchHistory, SearchPolicy, rank_candida
 from .fake import FakeProvider
 from .ledger import SharedJournal, SQLiteStore
 from .lifecycle import Engine
+from .market import MarketPolicy
+from .market import report as market_report
 from .models import Authorization, Candidate, Task
 from .optimization import propose
 from .planner import authorize, plan
@@ -30,7 +32,16 @@ def main() -> int:
     parser.add_argument(
         "--action",
         default="dry-run",
-        choices=["dry-run", "preflight", "discover", "simulate", "run", "reconcile", "cleanup"],
+        choices=[
+            "offers",
+            "dry-run",
+            "preflight",
+            "discover",
+            "simulate",
+            "run",
+            "reconcile",
+            "cleanup",
+        ],
     )
     parser.add_argument(
         "--diagnose-cuda",
@@ -55,8 +66,35 @@ def main() -> int:
     parser.add_argument(
         "--authorization", type=Path, help="reviewed execution context, NOT human approval"
     )
+    parser.add_argument("--provider", choices=["all", "runpod", "digitalocean"], help="offers only")
     args = parser.parse_args()
     try:
+        if args.action == "offers":
+            if any(
+                (
+                    args.mock_catalog,
+                    args.faults,
+                    args.authorization,
+                    args.search_policy,
+                    args.search_history,
+                    args.shared_mock_ledger,
+                    args.diagnose_cuda,
+                )
+            ):
+                raise ValueError("offers_requires_read_only_catalog")
+            market = market_report(
+                MarketPolicy.model_validate_json(args.config.read_text()), args.provider or "all"
+            )
+            args.output.mkdir(parents=True, exist_ok=True)
+            (args.output / "offers.json").write_text(json.dumps(market, indent=2) + "\n")
+            print(json.dumps(market))
+            return (
+                0
+                if market["ranked"] and all(v == "ok" for v in market["provider_status"].values())
+                else 2
+            )
+        if args.provider:
+            raise ValueError("provider_selector_requires_offers")
         if args.diagnose_cuda and args.action != "preflight":
             raise ValueError("cuda_diagnostics_require_read_only_preflight")
         if args.shared_mock_ledger and args.action not in {"simulate", "reconcile", "cleanup"}:
