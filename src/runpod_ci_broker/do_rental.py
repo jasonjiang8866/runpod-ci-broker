@@ -5,15 +5,13 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import sys
 import time
 import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .campaign import REPOSITORY
 from .digitalocean import CreateRejected, DigitalOcean
@@ -79,23 +77,14 @@ def owned(row: dict[str, Any], state: dict[str, Any]) -> int:
     return identifier
 
 
-def ssh_options(configured: str) -> dict[str, Any]:
-    if configured:
-        if configured.isascii() and configured.isdecimal() and int(configured) > 0:
-            return {"ssh_keys": [int(configured)]}
-        raise ProviderError("invalid_configured_ssh_key")
-    public = (
-        Ed25519PrivateKey.generate()
-        .public_key()
-        .public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
-        .decode("ascii")
-    )
-    config = {
-        "ssh_pwauth": False,
-        "disable_root": True,
-        "users": [{"name": "broker", "lock_passwd": True, "ssh_authorized_keys": [public]}],
-    }
-    return {"user_data": "#cloud-config\n" + json.dumps(config)}
+def ssh_key_reference(configured: str) -> int | str:
+    if not configured:
+        raise ProviderError("registered_ssh_key_required")
+    if re.fullmatch(r"[1-9][0-9]{0,18}", configured):
+        return int(configured)
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2}:){15}[0-9a-fA-F]{2}", configured):
+        return configured.lower()
+    raise ProviderError("invalid_configured_ssh_key")
 
 
 def credential_binding(client: DigitalOcean, name: str) -> str:
@@ -110,7 +99,7 @@ def launch(
     check_budget(store)
     if store.read(KEY)[1] is not None:
         raise LedgerError("rental_already_reserved")
-    access = ssh_options(configured_key)
+    key = ssh_key_reference(configured_key)
     client.listing("droplets")  # Confirm inventory access before the first POST.
     policy = MarketPolicy.model_validate_json(PROFILE.read_text())
     if policy.gpu_count != 1:
@@ -165,7 +154,7 @@ def launch(
                     "size": state["sku"],
                     "region": state["region"],
                     "image": "gpu-h100x1-base",
-                    **access,
+                    "ssh_keys": [key],
                     "backups": False,
                 },
             ).get("droplet", {})
@@ -277,8 +266,8 @@ def main() -> int:
             results = {}
             for stage, check in (
                 (
-                    "ssh_configuration",
-                    lambda: ssh_options(os.environ.get("DO_SSH_KEY_ID", "")),
+                    "ssh_key_reference_format",
+                    lambda: ssh_key_reference(os.environ.get("DO_SSH_KEY_ID", "")),
                 ),
                 ("droplet_inventory", lambda: client.listing("droplets")),
             ):
