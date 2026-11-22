@@ -73,6 +73,25 @@ def owned(row: dict[str, Any], state: dict[str, Any]) -> int:
     return identifier
 
 
+def ssh_key_id(client: DigitalOcean, configured: str) -> int:
+    if configured:
+        if configured.isascii() and configured.isdecimal() and int(configured) > 0:
+            return int(configured)
+        raise ProviderError("invalid_configured_ssh_key")
+    data = client.request("GET", "/account/keys", {"per_page": 2})
+    keys = data.get("ssh_keys")
+    if (
+        not isinstance(keys, list)
+        or len(keys) != 1
+        or data.get("meta", {}).get("total") != 1
+        or not isinstance(keys[0], dict)
+        or type(keys[0].get("id")) is not int
+        or keys[0]["id"] <= 0
+    ):
+        raise ProviderError("set_do_ssh_key_id_to_an_existing_team_key")
+    return int(keys[0]["id"])
+
+
 def launch(store: Store, client: DigitalOcean, identity: dict[str, Any], key_id: int) -> None:
     check_budget(store)
     if key_id <= 0 or store.read(KEY)[1] is not None:
@@ -230,7 +249,8 @@ def main() -> int:
                 or os.environ.get("RCB_CONFIRM_PAID") != "true"
             ):
                 raise LedgerError("manual_launch_required")
-            launch(store, DigitalOcean(mode="allocate"), identity, int(os.environ["DO_SSH_KEY_ID"]))
+            client = DigitalOcean(mode="allocate")
+            launch(store, client, identity, ssh_key_id(client, os.environ.get("DO_SSH_KEY_ID", "")))
             print("GPU Droplet reached active state")
         elif action == ["cleanup"]:
             _, state = store.read(KEY)

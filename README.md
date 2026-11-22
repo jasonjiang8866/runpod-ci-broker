@@ -98,9 +98,9 @@ The pilot waits for Droplet status `active`, then deletes and verifies
 absence by ID and complete tag inventory twice. The companion recovery
 workflow can repeat cleanup after the launch runner exits.
 
-For a paid pilot, configure `DIGITALOCEAN_RENTAL_TOKEN` with team account and
+For a paid pilot, use the existing `DIGITALOCEAN_ACCESS_TOKEN` with team account and
 size reads, Droplet creation/read/deletion, tag creation/read and SSH key
-read. Set repository variable `DO_SSH_KEY_ID` to an existing team key.
+read. The pilot uses the sole existing team SSH key automatically. If the team has multiple keys, set repository variable `DO_SSH_KEY_ID` to the intended key.
 Keep the existing campaign's journal encryption key available. Select
 `confirm_paid` only when ready to spend. The single-use reservation carries
 forward USD 16.003502 and adds USD 1.75 and 900 seconds within the existing

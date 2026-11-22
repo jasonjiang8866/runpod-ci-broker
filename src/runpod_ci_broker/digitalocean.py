@@ -35,7 +35,10 @@ class DigitalOcean:
     ) -> dict[str, Any]:
         individual = re.fullmatch(r"/droplets/[1-9][0-9]*", path) is not None
         if not (
-            (method == "GET" and (individual or path in {"/sizes", "/droplets", "/account"}))
+            (
+                method == "GET"
+                and (individual or path in {"/sizes", "/droplets", "/account", "/account/keys"})
+            )
             or (self.mode == "allocate" and method == "POST" and path == "/droplets")
             or (self.mode == "cleanup" and method == "DELETE" and individual)
         ):

@@ -333,3 +333,21 @@ def test_cleanup_transport_cannot_create(monkeypatch):
         DigitalOcean(mode="cleanup").request("POST", "/droplets")
     with pytest.raises(ProviderError, match="endpoint_not_allowed"):
         DigitalOcean(mode="allocate").request("DELETE", "/droplets/22")
+
+
+def test_pilot_uses_existing_key_only_when_unambiguous(monkeypatch):
+    monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "fixture")
+    client = DigitalOcean()
+
+    def get(method, path, params):
+        assert (method, path, params) == ("GET", "/account/keys", {"per_page": 2})
+        return {"ssh_keys": [{"id": 18}], "meta": {"total": 1}}
+
+    monkeypatch.setattr(client, "request", get)
+    assert rental.ssh_key_id(client, "") == 18
+    assert rental.ssh_key_id(client, "42") == 42
+    monkeypatch.setattr(
+        client, "request", lambda *args: {"ssh_keys": [{"id": 18}], "meta": {"total": 2}}
+    )
+    with pytest.raises(ProviderError, match="set_do_ssh_key_id"):
+        rental.ssh_key_id(client, "")

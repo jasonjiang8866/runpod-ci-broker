@@ -38,11 +38,11 @@ jobs:
         run: uv run --locked python -m runpod_ci_broker.sealed
       - name: Rent one eligible Droplet and wait for active
         env:
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_RENTAL_TOKEN }}
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           DO_SSH_KEY_ID: ${{ vars.DO_SSH_KEY_ID }}
         run: uv run --locked python -m runpod_ci_broker.do_rental start
       - name: Verify cleanup
         if: always()
         env:
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_RENTAL_TOKEN }}
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
         run: uv run --locked python -m runpod_ci_broker.do_rental cleanup

@@ -42,5 +42,5 @@ jobs:
         run: uv run --locked python -m runpod_ci_broker.sealed
       - name: Reconcile owned Droplet and verify deletion
         env:
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_RENTAL_TOKEN }}
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
         run: uv run --locked python -m runpod_ci_broker.do_rental cleanup
