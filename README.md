@@ -99,10 +99,14 @@ absence by ID and complete name-matched inventory twice. The companion recovery
 workflow can repeat cleanup after the launch runner exits.
 
 The pilot uses the existing `DIGITALOCEAN_ACCESS_TOKEN` for size and Droplet
-reads, creation and deletion. By default it generates a disposable Ed25519 key
-in memory and passes only the public key through cloud-init. This provisioning
-probe discards the private key. Set `DO_SSH_KEY_ID` to explicitly use an
-existing registered key. New rentals use a random instance name and store a
+reads, creation and deletion. Set the repository Actions variable
+`DO_SSH_KEY_ID` to the numeric ID or colon-delimited MD5 fingerprint of a public
+SSH key already registered with the same DigitalOcean team. The token needs
+`ssh_key:read` to attach this key during creation. The read-only preflight and
+launch check only the selected public key and Droplet inventory.
+[DigitalOcean Droplet API](https://docs.digitalocean.com/products/droplets/reference/api/droplets/). In the [live GPU pilot](https://github.com/jasonjiang8866/runpod-ci-broker/actions/runs/45056541947),
+DigitalOcean rejected a public key supplied only through cloud-init before
+allocating a Droplet. New rentals use a random instance name and store a
 per-rental credential binding in the encrypted journal. Recovery requires the
 original DO token until deletion is confirmed. A rotated token blocks automatic
 settlement, even when it belongs to the same team. Older tagged records retain

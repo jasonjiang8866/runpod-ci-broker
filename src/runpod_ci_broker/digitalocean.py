@@ -14,6 +14,8 @@ from urllib.request import Request, build_opener
 
 from .provider import NoRedirect, ProviderError, bounded_body, http_error
 
+SSH_KEY_REFERENCE = re.compile(r"[1-9][0-9]{0,18}|(?:[0-9a-fA-F]{2}:){15}[0-9a-fA-F]{2}")
+
 
 class CreateRejected(ProviderError):
     """A definitive API rejection. Only explicit capacity refusals allow another placement."""
@@ -34,10 +36,17 @@ class DigitalOcean:
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         individual = re.fullmatch(r"/droplets/[1-9][0-9]*", path) is not None
+        key_lookup = path.startswith("/account/keys/") and SSH_KEY_REFERENCE.fullmatch(
+            path.removeprefix("/account/keys/")
+        )
         if not (
             (
                 method == "GET"
-                and (individual or path in {"/sizes", "/droplets", "/account", "/account/keys"})
+                and (
+                    key_lookup
+                    or individual
+                    or path in {"/sizes", "/droplets", "/account", "/account/keys"}
+                )
             )
             or (self.mode == "allocate" and method == "POST" and path == "/droplets")
             or (self.mode == "cleanup" and method == "DELETE" and individual)
