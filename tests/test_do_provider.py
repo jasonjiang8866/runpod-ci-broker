@@ -351,3 +351,25 @@ def test_pilot_uses_existing_key_only_when_unambiguous(monkeypatch):
     )
     with pytest.raises(ProviderError, match="set_do_ssh_key_id"):
         rental.ssh_key_id(client, "")
+
+
+def test_preflight_checks_each_scope_without_writes_or_identity_disclosure(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["do_rental", "preflight"])
+    monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "fixture")
+    monkeypatch.delenv("DO_SSH_KEY_ID", raising=False)
+    calls = []
+
+    def get(client, method, path, params=None):
+        assert method == "GET" and client.mode == "read_only"
+        calls.append(path)
+        if path == "/account/keys":
+            raise ProviderError("permission_denied")
+        return {"account": {"team": {"uuid": "private-team"}}}
+
+    monkeypatch.setattr(DigitalOcean, "request", get)
+    assert rental.main() == 2
+    assert calls == ["/account/keys", "/account"]
+    assert json.loads(capsys.readouterr().out) == {
+        "ssh_key_selection": "permission_denied",
+        "team_identity": "ok",
+    }
