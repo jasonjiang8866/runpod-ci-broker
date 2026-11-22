@@ -240,6 +240,23 @@ def cleanup(store: Store, client: DigitalOcean) -> str:
 def main() -> int:
     action = sys.argv[1:]
     try:
+        if action == ["preflight"]:
+            client = DigitalOcean()
+            results = {}
+            for stage, check in (
+                (
+                    "ssh_key_selection",
+                    lambda: ssh_key_id(client, os.environ.get("DO_SSH_KEY_ID", "")),
+                ),
+                ("team_identity", lambda: team(client)),
+            ):
+                try:
+                    check()
+                    results[stage] = "ok"
+                except ProviderError as exc:
+                    results[stage] = exc.code
+            print(json.dumps(results))
+            return 0 if all(value == "ok" for value in results.values()) else 2
         identity = context()
         store = SealedStore(GitHubContentsStore(REPOSITORY))
         if action == ["start"]:

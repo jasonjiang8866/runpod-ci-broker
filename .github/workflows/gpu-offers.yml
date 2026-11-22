@@ -1,6 +1,11 @@
 name: Global GPU offers
 on:
   workflow_dispatch:
+    inputs:
+      check_do_rental_reads:
+        description: Check team identity and SSH key selection for the DO pilot (GET only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -22,6 +27,12 @@ jobs:
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: uv run --locked runpod-ci-broker --action offers --config examples/global-gpu-market.json
+      - name: Diagnose DigitalOcean rental prerequisites
+        if: always() && inputs.check_do_rental_reads
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          DO_SSH_KEY_ID: ${{ vars.DO_SSH_KEY_ID }}
+        run: uv run --locked python -m runpod_ci_broker.do_rental preflight
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
