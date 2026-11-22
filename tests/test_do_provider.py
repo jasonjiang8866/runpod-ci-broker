@@ -31,6 +31,7 @@ class Cloud:
     def __init__(self):
         self.rows = [size(), size(H200, 5, regions=("atl1",))]
         self.account = "test-team"
+        self.token = "fixture"
         self.vm = None
         self.posts = []
         self.deletes = []
@@ -41,7 +42,7 @@ class Cloud:
         if name == "sizes":
             assert filters == {"gpu_minimum": 1}
             return self.rows
-        assert name == "droplets" and filters["tag_name"].startswith("rcb-owner-")
+        assert name == "droplets"
         self.lists += 1
         return [self.vm] if self.vm else []
 
@@ -58,7 +59,7 @@ class Cloud:
                 "name": body["name"],
                 "size_slug": body["size"],
                 "region": {"slug": body["region"]},
-                "tags": body["tags"],
+                "tags": body.get("tags", []),
                 "status": "active",
             }
             if action:
@@ -182,6 +183,7 @@ def test_pagination_checks_completeness_and_never_follows_links(monkeypatch, dup
     ("status", "message", "code", "definitive"),
     [
         (422, "insufficient capacity in region", "capacity_refused", True),
+        (422, "SSH keys are required for this size", "provider_rejected_ssh_configuration", True),
         (403, "sensitive provider details", "permission_denied", True),
         (503, "out of capacity", "provider_unavailable", False),
     ],
@@ -213,7 +215,7 @@ def pilot(tmp_path, monkeypatch):
     cloud = Cloud()
     monkeypatch.setattr(rental.time, "sleep", lambda _: None)
     with pytest.raises(LedgerError, match="queue_missing"):
-        rental.launch(store, cloud, {}, 1)
+        rental.launch(store, cloud, {})
     assert cloud.posts == []
     monkeypatch.setattr(rental, "check_budget", lambda s: None)
     return store, cloud
@@ -222,14 +224,14 @@ def pilot(tmp_path, monkeypatch):
 def test_capacity_fallback_and_cleanup(pilot):
     store, cloud = pilot
     cloud.behavior = [CreateRejected("capacity_refused")]
-    rental.launch(store, cloud, {}, 1)
+    rental.launch(store, cloud, {})
     assert [p["region"] for p in cloud.posts] == ["ams3", "atl1"]
     assert store.read(rental.KEY)[1]["active"] is True
     assert rental.cleanup(store, cloud) == "verified_deleted"
     assert cloud.deletes == ["/droplets/22"] and cloud.lists >= 3
     assert rental.cleanup(store, cloud) == "verified_deleted"
     with pytest.raises(LedgerError):
-        rental.launch(store, cloud, {}, 1)
+        rental.launch(store, cloud, {})
     assert len(cloud.posts) == 2
 
 
@@ -237,7 +239,7 @@ def test_lost_create_is_recovered_by_ownership_and_never_retried(pilot):
     store, cloud = pilot
     cloud.behavior = [ProviderError("response_unverified")]
     with pytest.raises(ProviderError):
-        rental.launch(store, cloud, {}, 1)
+        rental.launch(store, cloud, {})
     assert store.read(rental.KEY)[1]["id"] is None and len(cloud.posts) == 1
     assert rental.cleanup(store, cloud) == "verified_deleted"
 
@@ -246,12 +248,12 @@ def test_no_guess_or_cross_team_delete(pilot):
     store, cloud = pilot
     cloud.behavior = [ProviderError("response_unverified")]
     with pytest.raises(ProviderError):
-        rental.launch(store, cloud, {}, 1)
-    cloud.account = "different"
-    with pytest.raises(ProviderError, match="team_mismatch"):
+        rental.launch(store, cloud, {})
+    cloud.token = "different"
+    with pytest.raises(ProviderError, match="credential_mismatch"):
         rental.cleanup(store, cloud)
-    cloud.account = "test-team"
-    cloud.vm["name"] = "different"
+    cloud.token = "fixture"
+    cloud.vm["size_slug"] = "different"
     with pytest.raises(ProviderError, match="ownership"):
         rental.cleanup(store, cloud)
     cloud.vm = None
@@ -265,12 +267,12 @@ def test_over_budget_and_permission_denied_do_not_fallback(pilot):
     store, cloud = pilot
     cloud.rows = [size(price=Decimal("5.0001"))]
     with pytest.raises(ProviderError, match="no_eligible"):
-        rental.launch(store, cloud, {}, 1)
+        rental.launch(store, cloud, {})
     assert not cloud.posts and store.read(rental.KEY)[1] is None
     cloud.rows = [size()]
     cloud.behavior = [CreateRejected("permission_denied")]
     with pytest.raises(CreateRejected):
-        rental.launch(store, cloud, {}, 1)
+        rental.launch(store, cloud, {})
     assert rental.cleanup(store, cloud) == "no_create"
     assert len(cloud.posts) == 1
 
@@ -310,7 +312,7 @@ def test_verified_queue_balance_is_inherited(tmp_path):
 
 def test_failed_delete_keeps_reservation_and_can_be_recovered(pilot, monkeypatch):
     store, cloud = pilot
-    rental.launch(store, cloud, {}, 1)
+    rental.launch(store, cloud, {})
     request = cloud.request
 
     def deny_delete(method, path, **kwargs):
@@ -335,41 +337,46 @@ def test_cleanup_transport_cannot_create(monkeypatch):
         DigitalOcean(mode="allocate").request("DELETE", "/droplets/22")
 
 
-def test_pilot_uses_existing_key_only_when_unambiguous(monkeypatch):
-    monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "fixture")
-    client = DigitalOcean()
-
-    def get(method, path, params):
-        assert (method, path, params) == ("GET", "/account/keys", {"per_page": 2})
-        return {"ssh_keys": [{"id": 18}], "meta": {"total": 1}}
-
-    monkeypatch.setattr(client, "request", get)
-    assert rental.ssh_key_id(client, "") == 18
-    assert rental.ssh_key_id(client, "42") == 42
-    monkeypatch.setattr(
-        client, "request", lambda *args: {"ssh_keys": [{"id": 18}], "meta": {"total": 2}}
-    )
-    with pytest.raises(ProviderError, match="set_do_ssh_key_id"):
-        rental.ssh_key_id(client, "")
+def test_ephemeral_or_explicit_ssh_key():
+    options = rental.ssh_options("")
+    config = json.loads(options["user_data"].split("\n", 1)[1])
+    public = config["users"][0]["ssh_authorized_keys"][0]
+    assert public.startswith("ssh-ed25519 ") and config["ssh_pwauth"] is False
+    assert "PRIVATE" not in options["user_data"] and options != rental.ssh_options("")
+    assert rental.ssh_options("42") == {"ssh_keys": [42]}
+    with pytest.raises(ProviderError):
+        rental.ssh_options("broken")
 
 
-def test_preflight_checks_each_scope_without_writes_or_identity_disclosure(monkeypatch, capsys):
+def test_preflight_does_not_read_account_or_keys(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["do_rental", "preflight"])
     monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "fixture")
     monkeypatch.delenv("DO_SSH_KEY_ID", raising=False)
-    calls = []
 
-    def get(client, method, path, params=None):
-        assert method == "GET" and client.mode == "read_only"
-        calls.append(path)
-        if path == "/account/keys":
-            raise ProviderError("permission_denied")
-        return {"account": {"team": {"uuid": "private-team"}}}
+    def get(client, method, path, params):
+        assert method == "GET" and path == "/droplets" and client.mode == "read_only"
+        return {"droplets": [], "meta": {"total": 0}}
 
     monkeypatch.setattr(DigitalOcean, "request", get)
-    assert rental.main() == 2
-    assert calls == ["/account/keys", "/account"]
+    assert rental.main() == 0
     assert json.loads(capsys.readouterr().out) == {
-        "ssh_key_selection": "permission_denied",
-        "team_identity": "ok",
+        "ssh_configuration": "ok",
+        "droplet_inventory": "ok",
     }
+
+
+def test_legacy_recovery_keeps_team_and_tag_checks(pilot):
+    store, cloud = pilot
+    rental.launch(store, cloud, {})
+    version, state = store.read(rental.KEY)
+    del state["credential_binding"]
+    state.update(team=cloud.account, tag="original-marker")
+    store.swap(rental.KEY, version, state)
+    cloud.account = "wrong-team"
+    with pytest.raises(ProviderError, match="team_mismatch"):
+        rental.cleanup(store, cloud)
+    cloud.account = state["team"]
+    with pytest.raises(ProviderError, match="ownership"):
+        rental.cleanup(store, cloud)
+    cloud.vm["tags"] = [state["tag"]]
+    assert rental.cleanup(store, cloud) == "verified_deleted"

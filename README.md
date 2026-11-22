@@ -95,18 +95,24 @@ refreshes global H100/H200 single-GPU offers before each attempt. On a
 definitive capacity refusal it tries another eligible placement, preferring
 a different region, up to three attempts. Ambiguous creates go to recovery.
 The pilot waits for Droplet status `active`, then deletes and verifies
-absence by ID and complete tag inventory twice. The companion recovery
+absence by ID and complete name-matched inventory twice. The companion recovery
 workflow can repeat cleanup after the launch runner exits.
 
-For a paid pilot, use the existing `DIGITALOCEAN_ACCESS_TOKEN` with team account and
-size reads, Droplet creation/read/deletion, tag creation/read and SSH key
-read. The pilot uses the sole existing team SSH key automatically. If the team has multiple keys, set repository variable `DO_SSH_KEY_ID` to the intended key.
+The pilot uses the existing `DIGITALOCEAN_ACCESS_TOKEN` for size and Droplet
+reads, creation and deletion. By default it generates a disposable Ed25519 key
+in memory and passes only the public key through cloud-init. This provisioning
+probe discards the private key. Set `DO_SSH_KEY_ID` to explicitly use an
+existing registered key. New rentals use a random instance name and store a
+per-rental credential binding in the encrypted journal. Recovery requires the
+original DO token until deletion is confirmed. A rotated token blocks automatic
+settlement, even when it belongs to the same team. Older tagged records retain
+their original team and tag checks.
 Keep the existing campaign's journal encryption key available. Select
 `confirm_paid` only when ready to spend. The single-use reservation carries
 forward USD 16.003502 and adds USD 1.75 and 900 seconds within the existing
 USD 20 / 18,000-second campaign. Provider charges can continue until deletion
 succeeds. Recovery preserves unresolved intent. An operator can rerun
-**Recover DigitalOcean GPU rental** with the same team's working credential.
+**Recover DigitalOcean GPU rental** with the rental's original credential.
 CUDA worker execution and artifact receipt on Droplets await a separate
 integration. [DigitalOcean custom API scopes](https://docs.digitalocean.com/reference/api/scopes/).
 

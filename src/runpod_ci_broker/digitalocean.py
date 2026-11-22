@@ -80,6 +80,14 @@ class DigitalOcean:
                         )
                     ):
                         code = "capacity_refused"
+                    elif isinstance(message, str):
+                        detail = message.lower()
+                        if "ssh key" in detail or "ssh_keys" in detail:
+                            code = "provider_rejected_ssh_configuration"
+                        elif "limit" in detail or "quota" in detail:
+                            code = "provider_limit_reached"
+                        elif "image" in detail:
+                            code = "provider_rejected_image"
                 raise CreateRejected(code) from None
             raise http_error(exc.code) from None
         except (ValueError, OSError):

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       check_do_rental_reads:
-        description: Check team identity and SSH key selection for the DO pilot (GET only)
+        description: Check Droplet inventory and SSH configuration for the DO pilot (GET only)
         type: boolean
         default: false
 permissions:
