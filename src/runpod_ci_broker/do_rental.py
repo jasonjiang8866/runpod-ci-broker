@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import sys
@@ -10,6 +11,9 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .campaign import REPOSITORY
 from .digitalocean import CreateRejected, DigitalOcean
@@ -66,37 +70,48 @@ def owned(row: dict[str, Any], state: dict[str, Any]) -> int:
         or row.get("name") != state["name"]
         or row.get("size_slug") != state["sku"]
         or row.get("region", {}).get("slug") != state["region"]
-        or not isinstance(row.get("tags"), list)
-        or state["tag"] not in row["tags"]
+        or (
+            "tag" in state
+            and (not isinstance(row.get("tags"), list) or state["tag"] not in row["tags"])
+        )
     ):
         raise ProviderError("droplet_ownership_unverified")
     return identifier
 
 
-def ssh_key_id(client: DigitalOcean, configured: str) -> int:
+def ssh_options(configured: str) -> dict[str, Any]:
     if configured:
         if configured.isascii() and configured.isdecimal() and int(configured) > 0:
-            return int(configured)
+            return {"ssh_keys": [int(configured)]}
         raise ProviderError("invalid_configured_ssh_key")
-    data = client.request("GET", "/account/keys", {"per_page": 2})
-    keys = data.get("ssh_keys")
-    if (
-        not isinstance(keys, list)
-        or len(keys) != 1
-        or data.get("meta", {}).get("total") != 1
-        or not isinstance(keys[0], dict)
-        or type(keys[0].get("id")) is not int
-        or keys[0]["id"] <= 0
-    ):
-        raise ProviderError("set_do_ssh_key_id_to_an_existing_team_key")
-    return int(keys[0]["id"])
+    public = (
+        Ed25519PrivateKey.generate()
+        .public_key()
+        .public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+        .decode("ascii")
+    )
+    config = {
+        "ssh_pwauth": False,
+        "disable_root": True,
+        "users": [{"name": "broker", "lock_passwd": True, "ssh_authorized_keys": [public]}],
+    }
+    return {"user_data": "#cloud-config\n" + json.dumps(config)}
 
 
-def launch(store: Store, client: DigitalOcean, identity: dict[str, Any], key_id: int) -> None:
+def credential_binding(client: DigitalOcean, name: str) -> str:
+    if not client.token:
+        raise ProviderError("credentials_missing")
+    return hmac.digest(client.token.encode(), ("rcb/do-rental/v2/" + name).encode(), "sha256").hex()
+
+
+def launch(
+    store: Store, client: DigitalOcean, identity: dict[str, Any], configured_key: str = ""
+) -> None:
     check_budget(store)
-    if key_id <= 0 or store.read(KEY)[1] is not None:
-        raise LedgerError("rental_already_reserved_or_key_invalid")
-    account = team(client)
+    if store.read(KEY)[1] is not None:
+        raise LedgerError("rental_already_reserved")
+    access = ssh_options(configured_key)
+    client.listing("droplets")  # Confirm inventory access before the first POST.
     policy = MarketPolicy.model_validate_json(PROFILE.read_text())
     if policy.gpu_count != 1:
         raise ValueError("single_gpu_required")
@@ -125,8 +140,7 @@ def launch(store: Store, client: DigitalOcean, identity: dict[str, Any], key_id:
         state = {
             "launch": identity,
             "name": "rcb-" + marker,
-            "tag": "rcb-owner-" + marker,
-            "team": account,
+            "credential_binding": credential_binding(client, "rcb-" + marker),
             "sku": best["sku"],
             "region": best["region"],
             "instance_hourly_usd": best["instance_hourly_usd"],
@@ -148,11 +162,10 @@ def launch(store: Store, client: DigitalOcean, identity: dict[str, Any], key_id:
                 "/droplets",
                 body={
                     "name": state["name"],
-                    "tags": [state["tag"]],
                     "size": state["sku"],
                     "region": state["region"],
                     "image": "gpu-h100x1-base",
-                    "ssh_keys": [key_id],
+                    **access,
                     "backups": False,
                 },
             ).get("droplet", {})
@@ -178,6 +191,16 @@ def launch(store: Store, client: DigitalOcean, identity: dict[str, Any], key_id:
             if saved != state:
                 raise LedgerError("rental_state_changed")
             store.swap(KEY, version, {**state, "active": True})
+            print(
+                json.dumps(
+                    {
+                        "status": "active",
+                        "gpu_size": state["sku"],
+                        "region": state["region"],
+                        "instance_hourly_usd": state["instance_hourly_usd"],
+                    }
+                )
+            )
             return
         time.sleep(5)
     raise ProviderError("active_deadline_elapsed")
@@ -191,11 +214,20 @@ def cleanup(store: Store, client: DigitalOcean) -> str:
         return "no_create"
     if state["status"] == "deleted":
         return "verified_deleted"
-    if team(client) != state["team"]:
+    if "credential_binding" in state:
+        if not hmac.compare_digest(
+            state["credential_binding"], credential_binding(client, state["name"])
+        ):
+            raise ProviderError("rental_credential_mismatch")
+    elif team(client) != state["team"]:
         raise ProviderError("team_mismatch")
 
     def matches() -> list[int]:
-        return [owned(row, state) for row in client.listing("droplets", tag_name=state["tag"])]
+        if "tag" in state:  # Preserve recovery for pre-v2 journals.
+            return [owned(row, state) for row in client.listing("droplets", tag_name=state["tag"])]
+        return [
+            owned(row, state) for row in client.listing("droplets") if row["name"] == state["name"]
+        ]
 
     found = matches()
     if len(found) > 1:
@@ -245,10 +277,10 @@ def main() -> int:
             results = {}
             for stage, check in (
                 (
-                    "ssh_key_selection",
-                    lambda: ssh_key_id(client, os.environ.get("DO_SSH_KEY_ID", "")),
+                    "ssh_configuration",
+                    lambda: ssh_options(os.environ.get("DO_SSH_KEY_ID", "")),
                 ),
-                ("team_identity", lambda: team(client)),
+                ("droplet_inventory", lambda: client.listing("droplets")),
             ):
                 try:
                     check()
@@ -267,7 +299,7 @@ def main() -> int:
             ):
                 raise LedgerError("manual_launch_required")
             client = DigitalOcean(mode="allocate")
-            launch(store, client, identity, ssh_key_id(client, os.environ.get("DO_SSH_KEY_ID", "")))
+            launch(store, client, identity, os.environ.get("DO_SSH_KEY_ID", ""))
             print("GPU Droplet reached active state")
         elif action == ["cleanup"]:
             _, state = store.read(KEY)
