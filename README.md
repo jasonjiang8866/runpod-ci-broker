@@ -52,7 +52,7 @@ records and reservations are retained, and reruns never create another Pod.
 - Separate process success, experiment acceptance, verified artifacts and confirmed Pod deletion.
 - Bound waiting, retries and collection. Preserve diagnostics when recovery fails.
 
-This is RunPod Pods + GitHub Actions only. No multi-cloud layer, local GPU routing,
+Paid execution currently uses RunPod Pods and GitHub Actions. No multi-cloud layer, local GPU routing,
 self-hosted runner scheduling, Kubernetes, web console, SaaS, automatic top-ups,
 unlimited retries or autoscaling. It never modifies account billing or creates,
 deletes or resizes Network/Global Volumes. It contains no project-specific ML logic.
@@ -72,6 +72,20 @@ The first command defaults to dry-run. Reports are `report.json` and `summary.md
 The second simulates the lifecycle; **it does not execute the configured program**.
 Example metrics and prices are fictional fixtures, not benchmark findings or quotes.
 Without `--mock-catalog`, dry-run is strictly offline and marks availability unknown.
+
+## DigitalOcean GPU inventory
+
+Run `uv run python -m runpod_ci_broker.do_spot` for a credential-free JSON
+snapshot of the [official hourly Spot capacity table](https://docs.digitalocean.com/products/droplets/details/spot-gpu-capacity/).
+Each model and datacenter has one of three states: `available`, `no_capacity`,
+or `not_offered`. The timestamp records retrieval. Account eligibility and
+allocatable quantity remain unknown. A failed fetch or an unrecognized table
+exits nonzero. This command can run independently of the RunPod controller.
+
+For on-demand plans, the [regional catalog](https://docs.digitalocean.com/products/droplets/details/gpu-availability/)
+lists supported locations. The [Sizes API](https://docs.digitalocean.com/reference/api/reference/sizes/)
+accepts `gpu_minimum=1` for an authenticated catalog query. Plan availability
+does not reserve a GPU. DigitalOcean paid allocation and cleanup are pending.
 
 ## Adaptive resource discovery
 
