@@ -5,7 +5,6 @@ from __future__ import annotations
 import hmac
 import json
 import os
-import re
 import sys
 import time
 import uuid
@@ -14,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .campaign import REPOSITORY
-from .digitalocean import CreateRejected, DigitalOcean
+from .digitalocean import SSH_KEY_REFERENCE, CreateRejected, DigitalOcean
 from .handover import GitHubEvidence, context
 from .ledger import GitHubContentsStore, LedgerError, Store
 from .market import MarketPolicy, do_quotes
@@ -77,14 +76,18 @@ def owned(row: dict[str, Any], state: dict[str, Any]) -> int:
     return identifier
 
 
-def ssh_key_reference(configured: str) -> int | str:
+def registered_key(client: DigitalOcean, configured: str) -> int:
     if not configured:
         raise ProviderError("registered_ssh_key_required")
-    if re.fullmatch(r"[1-9][0-9]{0,18}", configured):
-        return int(configured)
-    if re.fullmatch(r"(?:[0-9a-fA-F]{2}:){15}[0-9a-fA-F]{2}", configured):
-        return configured.lower()
-    raise ProviderError("invalid_configured_ssh_key")
+    if not SSH_KEY_REFERENCE.fullmatch(configured):
+        raise ProviderError("invalid_configured_ssh_key")
+    ref = configured.lower()
+    key = client.request("GET", f"/account/keys/{ref}").get("ssh_key")
+    if not isinstance(key, dict) or type(key.get("id")) is not int or key["id"] <= 0:
+        raise ProviderError("registered_ssh_key_unverified")
+    if ref != (str(key["id"]) if ref.isdecimal() else key.get("fingerprint")):
+        raise ProviderError("registered_ssh_key_unverified")
+    return int(key["id"])
 
 
 def credential_binding(client: DigitalOcean, name: str) -> str:
@@ -99,7 +102,7 @@ def launch(
     check_budget(store)
     if store.read(KEY)[1] is not None:
         raise LedgerError("rental_already_reserved")
-    key = ssh_key_reference(configured_key)
+    key = registered_key(client, configured_key)
     client.listing("droplets")  # Confirm inventory access before the first POST.
     policy = MarketPolicy.model_validate_json(PROFILE.read_text())
     if policy.gpu_count != 1:
@@ -266,8 +269,8 @@ def main() -> int:
             results = {}
             for stage, check in (
                 (
-                    "ssh_key_reference_format",
-                    lambda: ssh_key_reference(os.environ.get("DO_SSH_KEY_ID", "")),
+                    "registered_ssh_key",
+                    lambda: registered_key(client, os.environ.get("DO_SSH_KEY_ID", "")),
                 ),
                 ("droplet_inventory", lambda: client.listing("droplets")),
             ):

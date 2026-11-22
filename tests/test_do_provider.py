@@ -47,6 +47,9 @@ class Cloud:
         return [self.vm] if self.vm else []
 
     def request(self, method, path, body=None):
+        if path in ("/account/keys/42", "/account/keys/" + ":".join(["ab"] * 16)):
+            assert method == "GET"
+            return {"ssh_key": {"id": 42, "fingerprint": ":".join(["ab"] * 16)}}
         if path == "/account":
             return {"account": {"team": {"uuid": self.account}}}
         if method == "POST":
@@ -345,11 +348,11 @@ def test_missing_registered_key_stops_before_reservation(pilot):
     assert not cloud.posts and store.read(rental.KEY)[1] is None
 
 
-def test_fingerprint_sent_in_create_request(pilot):
+def test_fingerprint_resolved_to_id_for_create_request(pilot):
     store, cloud = pilot
     fingerprint = ":".join(["AB"] * 16)
     rental.launch(store, cloud, {}, fingerprint)
-    assert cloud.posts[0]["ssh_keys"] == [fingerprint.lower()]
+    assert cloud.posts[0]["ssh_keys"] == [42]
     assert "user_data" not in cloud.posts[0]
 
 
@@ -361,21 +364,40 @@ def test_fingerprint_sent_in_create_request(pilot):
         ("not-a-key", "invalid_configured_ssh_key"),
     ],
 )
-def test_preflight_checks_key_format_without_reading_account(monkeypatch, capsys, value, result):
+def test_preflight_checks_only_the_selected_key_and_droplets(monkeypatch, capsys, value, result):
     monkeypatch.setattr(sys, "argv", ["do_rental", "preflight"])
     monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "fixture")
     monkeypatch.setenv("DO_SSH_KEY_ID", value)
 
-    def get(client, method, path, params):
-        assert method == "GET" and path == "/droplets" and client.mode == "read_only"
+    def get(client, method, path, params=None):
+        assert method == "GET" and client.mode == "read_only"
+        if path == "/account/keys/42":
+            return {"ssh_key": {"id": 42}}
+        assert path == "/droplets"
         return {"droplets": [], "meta": {"total": 0}}
 
     monkeypatch.setattr(DigitalOcean, "request", get)
     assert rental.main() == (0 if result == "ok" else 2)
     assert json.loads(capsys.readouterr().out) == {
-        "ssh_key_reference_format": result,
+        "registered_ssh_key": result,
         "droplet_inventory": "ok",
     }
+
+
+@pytest.mark.parametrize("denied", [False, True])
+def test_key_lookup_failure_preserves_budget(pilot, monkeypatch, denied):
+    store, cloud = pilot
+
+    def read(method, path):
+        assert (method, path) == ("GET", "/account/keys/42")
+        if denied:
+            raise ProviderError("permission_denied")
+        return {"ssh_key": {"id": 99}}
+
+    monkeypatch.setattr(cloud, "request", read)
+    with pytest.raises(ProviderError, match="permission_denied|registered_ssh_key_unverified"):
+        rental.launch(store, cloud, {}, "42")
+    assert store.read(rental.KEY)[1] is None and not cloud.posts
 
 
 def test_legacy_recovery_keeps_team_and_tag_checks(pilot):
